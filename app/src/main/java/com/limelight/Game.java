@@ -525,7 +525,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE);
             }
             else if (desiredOrientation == Configuration.ORIENTATION_PORTRAIT) {
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT);
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
             }
             else {
                 // If we don't have a reason to lock to portrait or landscape, allow any orientation

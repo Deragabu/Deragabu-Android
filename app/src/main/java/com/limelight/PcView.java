@@ -9,6 +9,7 @@ import com.limelight.binding.crypto.AndroidCryptoProvider;
 import com.limelight.binding.input.driver.UsbDriverService;
 import com.limelight.computers.ComputerManagerListener;
 import com.limelight.computers.ComputerManagerService;
+import com.limelight.computers.PairingService;
 import com.limelight.grid.PcGridAdapter;
 import com.limelight.grid.assets.DiskAssetLoader;
 import com.limelight.nvstream.http.ComputerDetails;
@@ -440,98 +441,79 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         }
 
         Toast.makeText(PcView.this, getResources().getString(R.string.pairing), Toast.LENGTH_SHORT).show();
-        new Thread(new Runnable() {
+
+        // Start PairingService for background pairing with notification
+        Intent pairingIntent = new Intent(this, PairingService.class);
+        pairingIntent.putExtra(PairingService.EXTRA_COMPUTER_UUID, computer.uuid);
+        pairingIntent.putExtra(PairingService.EXTRA_COMPUTER_NAME, computer.name);
+        pairingIntent.putExtra(PairingService.EXTRA_COMPUTER_ADDRESS, computer.activeAddress.address);
+        pairingIntent.putExtra(PairingService.EXTRA_COMPUTER_HTTPS_PORT, computer.httpsPort);
+        pairingIntent.putExtra(PairingService.EXTRA_UNIQUE_ID, managerBinder.getUniqueId());
+
+        try {
+            if (computer.serverCert != null) {
+                pairingIntent.putExtra(PairingService.EXTRA_SERVER_CERT, computer.serverCert.getEncoded());
+            }
+        } catch (java.security.cert.CertificateEncodingException e) {
+            e.printStackTrace();
+        }
+
+        // Bind to the service to receive pairing result callbacks
+        ServiceConnection pairingServiceConnection = new ServiceConnection() {
             @Override
-            public void run() {
-                NvHTTP httpConn;
-                String message;
-                boolean success = false;
-                try {
-                    // Stop updates and wait while pairing
-                    stopComputerUpdates(true);
-
-                    httpConn = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(computer),
-                            computer.httpsPort, managerBinder.getUniqueId(), computer.serverCert,
-                            PlatformBinding.getCryptoProvider(PcView.this));
-                    if (httpConn.getPairState() == PairState.PAIRED) {
-                        // Don't display any toast, but open the app list
-                        message = null;
-                        success = true;
-                    }
-                    else {
-                        final String pinStr = PairingManager.generatePinString();
-
-                        // Spin the dialog off in a thread because it blocks
-                        Dialog.displayDialog(PcView.this, getResources().getString(R.string.pair_pairing_title),
-                                getResources().getString(R.string.pair_pairing_msg)+" "+pinStr+"\n\n"+
-                                getResources().getString(R.string.pair_pairing_help), false);
-
-                        PairingManager pm = httpConn.getPairingManager();
-
-                        PairState pairState = pm.pair(httpConn.getServerInfo(true), pinStr);
-                        if (pairState == PairState.PIN_WRONG) {
-                            message = getResources().getString(R.string.pair_incorrect_pin);
-                        }
-                        else if (pairState == PairState.FAILED) {
-                            if (computer.runningGameId != 0) {
-                                message = getResources().getString(R.string.pair_pc_ingame);
-                            }
-                            else {
-                                message = getResources().getString(R.string.pair_fail);
-                            }
-                        }
-                        else if (pairState == PairState.ALREADY_IN_PROGRESS) {
-                            message = getResources().getString(R.string.pair_already_in_progress);
-                        }
-                        else if (pairState == PairState.PAIRED) {
-                            // Just navigate to the app view without displaying a toast
-                            message = null;
-                            success = true;
-
-                            // Pin this certificate for later HTTPS use
-                            managerBinder.getComputer(computer.uuid).serverCert = pm.getPairedCert();
-
-                            // Invalidate reachability information after pairing to force
-                            // a refresh before reading pair state again
-                            managerBinder.invalidateStateForComputer(computer.uuid);
-                        }
-                        else {
-                            // Should be no other values
-                            message = null;
-                        }
-                    }
-                } catch (UnknownHostException e) {
-                    message = getResources().getString(R.string.error_unknown_host);
-                } catch (FileNotFoundException e) {
-                    message = getResources().getString(R.string.error_404);
-                } catch (XmlPullParserException | IOException e) {
-                    e.printStackTrace();
-                    message = e.getMessage();
-                }
-
-                Dialog.closeDialogs();
-
-                final String toastMessage = message;
-                final boolean toastSuccess = success;
-                runOnUiThread(new Runnable() {
+            public void onServiceConnected(ComponentName name, IBinder service) {
+                PairingService.PairingBinder binder = (PairingService.PairingBinder) service;
+                final ServiceConnection conn = this;
+                binder.setListener(new PairingService.PairingListener() {
                     @Override
-                    public void run() {
-                        if (toastMessage != null) {
-                            Toast.makeText(PcView.this, toastMessage, Toast.LENGTH_LONG).show();
-                        }
-
-                        if (toastSuccess) {
+                    public void onPairingSuccess(String computerUuid, java.security.cert.X509Certificate serverCert) {
+                        runOnUiThread(() -> {
+                            // Pin this certificate for later HTTPS use
+                            if (managerBinder != null) {
+                                ComputerDetails comp = managerBinder.getComputer(computerUuid);
+                                if (comp != null) {
+                                    comp.serverCert = serverCert;
+                                    // Invalidate reachability information after pairing
+                                    managerBinder.invalidateStateForComputer(computerUuid);
+                                }
+                            }
                             // Open the app list after a successful pairing attempt
                             doAppList(computer, true, false);
-                        }
-                        else {
+                        });
+                        safeUnbind(conn);
+                    }
+
+                    @Override
+                    public void onPairingFailed(String computerUuid, String message) {
+                        runOnUiThread(() -> {
+                            if (message != null) {
+                                Toast.makeText(PcView.this, message, Toast.LENGTH_LONG).show();
+                            }
                             // Start polling again if we're still in the foreground
                             startComputerUpdates();
+                        });
+                        safeUnbind(conn);
+                    }
+
+                    private void safeUnbind(ServiceConnection connection) {
+                        try {
+                            PcView.this.unbindService(connection);
+                        } catch (Exception e) {
+                            // Ignore if already unbound
                         }
                     }
                 });
             }
-        }).start();
+
+            @Override
+            public void onServiceDisconnected(ComponentName name) {
+                // Service crashed or was killed
+                runOnUiThread(() -> startComputerUpdates());
+            }
+        };
+        bindService(pairingIntent, pairingServiceConnection, Service.BIND_AUTO_CREATE);
+
+        startForegroundService(pairingIntent);
     }
 
     private void doWakeOnLan(final ComputerDetails computer) {

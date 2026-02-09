@@ -434,12 +434,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         // an HEVC decoder, we will use Rec 709 (even for H.264) since we can't choose a
         // colorspace by codec (and it's probably safe to say a SoC with HEVC decoding is
         // plenty modern enough to handle H.264 VUI colorspace info).
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O || hevcDecoder != null || av1Decoder != null) {
-            return MoonBridge.COLORSPACE_REC_709;
-        }
-        else {
-            return MoonBridge.COLORSPACE_REC_601;
-        }
+        return MoonBridge.COLORSPACE_REC_709;
     }
 
     public int getPreferredColorRange() {
@@ -1423,7 +1418,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         // Flip stats windows roughly every second
         if (SystemClock.uptimeMillis() >= activeWindowVideoStats.measurementStartTimestamp + 1000) {
-            if (prefs.enablePerfOverlay) {
+            // Calculate performance stats if either overlay or notification is enabled
+            if (prefs.enablePerfOverlay || prefs.enableStatsNotification) {
                 VideoStats lastTwo = new VideoStats();
                 lastTwo.add(lastWindowVideoStats);
                 lastTwo.add(activeWindowVideoStats);

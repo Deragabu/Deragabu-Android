@@ -43,6 +43,20 @@ public class StreamSettings extends Activity {
 
     private static final int REQUEST_NOTIFICATION_PERMISSION = 1001;
 
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_NOTIFICATION_PERMISSION) {
+            if (grantResults.length > 0 && grantResults[0] != PackageManager.PERMISSION_GRANTED) {
+                // Permission denied, uncheck the checkbox
+                SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(this);
+                prefs.edit().putBoolean("checkbox_enable_stats_notification", false).apply();
+                // Reload settings to reflect the change
+                reloadSettings();
+            }
+        }
+    }
+
     // HACK for Android 9
     static DisplayCutout displayCutoutP;
 

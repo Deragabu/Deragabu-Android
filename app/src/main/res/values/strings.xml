@@ -43,6 +43,17 @@
     <string name="pair_incorrect_pin">Incorrect PIN</string>
     <string name="pair_fail">Pairing failed</string>
     <string name="pair_already_in_progress">Pairing already in progress</string>
+    <string name="pair_pin_copied">PIN copied to clipboard</string>
+
+    <!-- Pairing notification -->
+    <string name="pairing_notification_channel_name">Pairing</string>
+    <string name="pairing_notification_channel_description">Shows pairing status and PIN code</string>
+    <string name="pairing_notification_title">Pairing with %1$s</string>
+    <string name="pairing_notification_content">PIN: %1$s</string>
+    <string name="pairing_notification_success_title">Pairing Successful</string>
+    <string name="pairing_notification_success_content">Successfully paired with %1$s</string>
+    <string name="pairing_notification_failed_title">Pairing Failed</string>
+    <string name="pairing_notification_failed_content">Failed to pair with %1$s: %2$s</string>
 
     <!-- WOL messages -->
     <string name="wol_pc_online">Computer is online</string>
