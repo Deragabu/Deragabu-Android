@@ -34,6 +34,7 @@ public class PairingService extends Service {
     public static final String EXTRA_COMPUTER_UUID = "computer_uuid";
     public static final String EXTRA_COMPUTER_NAME = "computer_name";
     public static final String EXTRA_COMPUTER_ADDRESS = "computer_address";
+    public static final String EXTRA_COMPUTER_HTTP_PORT = "computer_http_port";
     public static final String EXTRA_COMPUTER_HTTPS_PORT = "computer_https_port";
     public static final String EXTRA_SERVER_CERT = "server_cert";
     public static final String EXTRA_UNIQUE_ID = "unique_id";
@@ -116,7 +117,8 @@ public class PairingService extends Service {
         final String computerUuid = intent.getStringExtra(EXTRA_COMPUTER_UUID);
         final String computerName = intent.getStringExtra(EXTRA_COMPUTER_NAME);
         final String computerAddress = intent.getStringExtra(EXTRA_COMPUTER_ADDRESS);
-        final int httpsPort = intent.getIntExtra(EXTRA_COMPUTER_HTTPS_PORT, 47984);
+        final int httpPort = intent.getIntExtra(EXTRA_COMPUTER_HTTP_PORT, NvHTTP.DEFAULT_HTTP_PORT);
+        final int httpsPort = intent.getIntExtra(EXTRA_COMPUTER_HTTPS_PORT, 0);
         final byte[] serverCertBytes = intent.getByteArrayExtra(EXTRA_SERVER_CERT);
         final String uniqueId = intent.getStringExtra(EXTRA_UNIQUE_ID);
 
@@ -134,7 +136,7 @@ public class PairingService extends Service {
         // Start pairing in background
         cancelled = false;
         pairingThread = new Thread(() ->
-            doPairing(computerUuid, computerName, computerAddress, httpsPort, serverCertBytes, uniqueId, currentPin));
+            doPairing(computerUuid, computerName, computerAddress, httpPort, httpsPort, serverCertBytes, uniqueId, currentPin));
         pairingThread.start();
 
         return START_STICKY;
@@ -208,7 +210,7 @@ public class PairingService extends Service {
     }
 
     private void doPairing(String computerUuid, String computerName, String computerAddress,
-                           int httpsPort, byte[] serverCertBytes, String uniqueId, String pin) {
+                           int httpPort, int httpsPort, byte[] serverCertBytes, String uniqueId, String pin) {
         String message = null;
         X509Certificate pairedCert = null;
         boolean success = false;
@@ -221,7 +223,7 @@ public class PairingService extends Service {
                         new java.io.ByteArrayInputStream(serverCertBytes));
             }
 
-            ComputerDetails.AddressTuple addressTuple = new ComputerDetails.AddressTuple(computerAddress, httpsPort);
+            ComputerDetails.AddressTuple addressTuple = new ComputerDetails.AddressTuple(computerAddress, httpPort);
 
             NvHTTP httpConn = new NvHTTP(
                     addressTuple,

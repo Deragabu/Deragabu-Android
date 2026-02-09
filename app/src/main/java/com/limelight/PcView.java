@@ -36,7 +36,9 @@ import android.app.Service;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.Manifest;
 import android.opengl.GLSurfaceView;
 import android.os.Build;
 import android.os.Bundle;
@@ -64,11 +66,14 @@ import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
 public class PcView extends Activity implements AdapterFragmentCallbacks {
+    private static final int REQUEST_NOTIFICATION_PERMISSION = 1001;
+
     private RelativeLayout noPcFoundLayout;
     private PcGridAdapter pcGridAdapter;
     private ShortcutHelper shortcutHelper;
     private ComputerManagerService.ComputerManagerBinder managerBinder;
     private boolean freezeUpdates, runningPolling, inForeground, completeOnCreateCalled;
+    private ComputerDetails pendingPairComputer;
 
     // USB driver service for gamepad support
     private boolean connectedToUsbDriverService = false;
@@ -371,6 +376,19 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     }
 
     @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_NOTIFICATION_PERMISSION) {
+            // Continue with pairing regardless of whether permission was granted
+            // The foreground service will still work, just without notification on Android 13+
+            if (pendingPairComputer != null) {
+                startPairingService(pendingPairComputer);
+                pendingPairComputer = null;
+            }
+        }
+    }
+
+    @Override
     public void onCreateContextMenu(ContextMenu menu, View v, ContextMenuInfo menuInfo) {
         stopComputerUpdates(false);
 
@@ -440,6 +458,20 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
             return;
         }
 
+        // Check notification permission on Android 13+ before starting foreground service
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                // Save the computer for pairing after permission is granted
+                pendingPairComputer = computer;
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATION_PERMISSION);
+                return;
+            }
+        }
+
+        startPairingService(computer);
+    }
+
+    private void startPairingService(final ComputerDetails computer) {
         Toast.makeText(PcView.this, getResources().getString(R.string.pairing), Toast.LENGTH_SHORT).show();
 
         // Start PairingService for background pairing with notification
@@ -447,6 +479,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         pairingIntent.putExtra(PairingService.EXTRA_COMPUTER_UUID, computer.uuid);
         pairingIntent.putExtra(PairingService.EXTRA_COMPUTER_NAME, computer.name);
         pairingIntent.putExtra(PairingService.EXTRA_COMPUTER_ADDRESS, computer.activeAddress.address);
+        pairingIntent.putExtra(PairingService.EXTRA_COMPUTER_HTTP_PORT, computer.activeAddress.port);
         pairingIntent.putExtra(PairingService.EXTRA_COMPUTER_HTTPS_PORT, computer.httpsPort);
         pairingIntent.putExtra(PairingService.EXTRA_UNIQUE_ID, managerBinder.getUniqueId());
 
