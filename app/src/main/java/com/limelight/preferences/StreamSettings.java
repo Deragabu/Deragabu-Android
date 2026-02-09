@@ -41,14 +41,14 @@ public class StreamSettings extends Activity {
     private PreferenceConfiguration previousPrefs;
     private int previousDisplayPixelCount;
 
+    private static final int REQUEST_NOTIFICATION_PERMISSION = 1001;
+
     // HACK for Android 9
     static DisplayCutout displayCutoutP;
 
     void reloadSettings() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Display.Mode mode = getWindowManager().getDefaultDisplay().getMode();
-            previousDisplayPixelCount = mode.getPhysicalWidth() * mode.getPhysicalHeight();
-        }
+        Display.Mode mode = getWindowManager().getDefaultDisplay().getMode();
+        previousDisplayPixelCount = mode.getPhysicalWidth() * mode.getPhysicalHeight();
         getFragmentManager().beginTransaction().replace(
                 R.id.stream_settings, new SettingsFragment()
         ).commitAllowingStateLoss();
@@ -568,6 +568,26 @@ public class StreamSettings extends Activity {
                     }, 500);
 
                     // Allow the original preference change to take place
+                    return true;
+                }
+            });
+
+            // Request notification permission when stats notification is enabled
+            findPreference("checkbox_enable_stats_notification").setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
+                @Override
+                public boolean onPreferenceChange(Preference preference, Object newValue) {
+                    if ((Boolean) newValue) {
+                        // User is enabling stats notification, request permission
+                        Activity activity = getActivity();
+                        if (activity != null) {
+                            if (activity.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                                activity.requestPermissions(
+                                        new String[]{android.Manifest.permission.POST_NOTIFICATIONS},
+                                        REQUEST_NOTIFICATION_PERMISSION
+                                );
+                            }
+                        }
+                    }
                     return true;
                 }
             });

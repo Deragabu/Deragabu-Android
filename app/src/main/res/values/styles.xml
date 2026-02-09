@@ -1,18 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-
-    <!--
-        Base application theme, dependent on API level. This theme is replaced
-        by AppBaseTheme from res/values-vXX/styles.xml on newer devices.
-
-    -->
-    <style name="AppBaseTheme" parent="android:Theme">
-        <!--
-            Theme customizations available in newer API levels can go in
-            res/values-vXX/styles.xml, while customizations related to
-            backward-compatibility can go here.
-
-        -->
+    <style name="AppBaseTheme" parent="android:Theme.Material">
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <!-- Avoid some systems like MIUI which break the visibility of games title -->
+        <item name="android:forceDarkAllowed">false</item>
     </style>
 
     <!-- Application theme. -->

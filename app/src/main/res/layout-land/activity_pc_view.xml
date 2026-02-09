@@ -29,6 +29,7 @@
                 android:layout_height="75dp"
                 android:indeterminate="true"/>
             <TextView
+                android:id="@+id/searching_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_toRightOf="@+id/pcs_loading"

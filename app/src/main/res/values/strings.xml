@@ -97,6 +97,8 @@
     <string name="ip_hint">IP address of host PC</string>
     <string name="searching_pc">Searching for host PCs on your local network…\n\n
         Ensure Sunshine is running on your host PC.</string>
+    <string name="searching_pc_mdns_disabled">Click the + button to add your host PC manually.\n\n
+        Ensure Sunshine is running on your host PC.</string>
     <string name="yes">Yes</string>
     <string name="no">No</string>
     <string name="lost_connection">Lost connection to PC</string>
@@ -252,6 +254,8 @@
     <string name="summary_full_range">This will cause loss of detail in light and dark areas if your device doesn\'t properly display full range video content.</string>
     <string name="title_enable_perf_overlay">Show performance stats while streaming</string>
     <string name="summary_enable_perf_overlay">Display real-time stream performance information while streaming</string>
+    <string name="title_enable_stats_notification">Show stats in notification</string>
+    <string name="summary_enable_stats_notification">Display streaming statistics in a persistent notification</string>
     <string name="title_enable_post_stream_toast">Show latency message after streaming</string>
     <string name="summary_enable_post_stream_toast">Display a latency information message after the stream ends</string>
 
@@ -304,4 +308,9 @@
     <!-- mDNS Settings -->
     <string name="title_checkbox_enable_mdns">Enable mDNS discovery</string>
     <string name="summary_checkbox_enable_mdns">Automatically discover host PCs on your local network</string>
+
+    <!-- Notification -->
+    <string name="stats_notification_channel_name">Streaming Statistics</string>
+    <string name="stats_notification_channel_description">Shows real-time streaming performance statistics</string>
+    <string name="stats_notification_title">Moonlight Streaming</string>
 </resources>

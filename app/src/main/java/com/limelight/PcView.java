@@ -51,7 +51,9 @@ import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ImageButton;
+import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.AdapterView.AdapterContextMenuInfo;
 
@@ -144,15 +146,14 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         UiHelper.notifyNewRootView(this);
 
         // Allow floating expanded PiP overlays while browsing PCs
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            setShouldDockBigOverlays(false);
-        }
+        setShouldDockBigOverlays(false);
 
         // Set default preferences if we've never been run
         PreferenceManager.setDefaultValues(this, R.xml.preferences, false);
 
         // Set the correct layout for the PC grid
-        pcGridAdapter.updateLayoutWithPreferences(this, PreferenceConfiguration.readPreferences(this));
+        PreferenceConfiguration prefConfig = PreferenceConfiguration.readPreferences(this);
+        pcGridAdapter.updateLayoutWithPreferences(this, prefConfig);
 
         // Setup the list view
         ImageButton settingsButton = findViewById(R.id.settingsButton);
@@ -191,6 +192,20 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
             .commitAllowingStateLoss();
 
         noPcFoundLayout = findViewById(R.id.no_pc_found_layout);
+
+        // Update the hint text and ProgressBar visibility based on mDNS setting
+        TextView searchingText = findViewById(R.id.searching_text);
+        ProgressBar pcsLoading = findViewById(R.id.pcs_loading);
+        if (!prefConfig.enableMdns) {
+            // mDNS is disabled, show manual add hint and hide ProgressBar
+            searchingText.setText(R.string.searching_pc_mdns_disabled);
+            pcsLoading.setVisibility(View.GONE);
+        } else {
+            // mDNS is enabled, show searching hint and ProgressBar
+            searchingText.setText(R.string.searching_pc);
+            pcsLoading.setVisibility(View.VISIBLE);
+        }
+
         if (pcGridAdapter.getCount() == 0) {
             noPcFoundLayout.setVisibility(View.VISIBLE);
         }
