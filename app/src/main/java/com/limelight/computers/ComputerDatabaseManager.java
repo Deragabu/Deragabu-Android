@@ -144,7 +144,8 @@ public class ComputerDatabaseManager {
             details.macAddress = json.optString(ComputerFields.MAC_ADDRESS, null);
 
             String certBase64 = json.optString(ComputerFields.SERVER_CERT, null);
-            if (!certBase64.isEmpty()) {
+            //noinspection ConstantValue
+            if (certBase64 != null && !certBase64.isEmpty()) {
                 try {
                     byte[] derCertData = Base64.decode(certBase64, Base64.NO_WRAP);
                     details.serverCert = (X509Certificate) CertificateFactory.getInstance("X.509")
