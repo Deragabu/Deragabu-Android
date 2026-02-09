@@ -175,8 +175,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         addComputerButton.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
-                Intent i = new Intent(PcView.this, AddComputerManually.class);
-                startActivity(i);
+                showAddComputerDialog();
             }
         });
         helpButton.setOnClickListener(new OnClickListener() {
@@ -469,6 +468,71 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         }
 
         startPairingService(computer);
+    }
+
+    private void showAddComputerDialog() {
+        if (managerBinder == null) {
+            Toast.makeText(PcView.this, getResources().getString(R.string.error_manager_not_running), Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        Dialog.displayAddComputerDialog(this, hostAddress -> {
+            Toast.makeText(PcView.this, getResources().getString(R.string.msg_add_pc), Toast.LENGTH_SHORT).show();
+
+            new Thread(() -> {
+                boolean success = false;
+                try {
+                    // Parse the host address
+                    java.net.URI uri = parseHostInput(hostAddress);
+                    if (uri != null && uri.getHost() != null && !uri.getHost().isEmpty()) {
+                        String host = uri.getHost();
+                        int port = uri.getPort();
+                        if (port == -1) {
+                            port = NvHTTP.DEFAULT_HTTP_PORT;
+                        }
+
+                        ComputerDetails details = new ComputerDetails();
+                        details.manualAddress = new ComputerDetails.AddressTuple(host, port);
+                        success = managerBinder.addComputerBlocking(details);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } catch (Exception e) {
+                    LimeLog.warning("Failed to add computer: " + e.getMessage());
+                }
+
+                final boolean finalSuccess = success;
+                runOnUiThread(() -> {
+                    if (finalSuccess) {
+                        Toast.makeText(PcView.this, getResources().getString(R.string.addpc_success), Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(PcView.this, getResources().getString(R.string.addpc_fail), Toast.LENGTH_LONG).show();
+                    }
+                });
+            }).start();
+        });
+    }
+
+    private java.net.URI parseHostInput(String rawUserInput) {
+        try {
+            // Try adding a scheme and parsing the remaining input
+            java.net.URI uri = new java.net.URI("moonlight://" + rawUserInput);
+            if (uri.getHost() != null && !uri.getHost().isEmpty()) {
+                return uri;
+            }
+        } catch (java.net.URISyntaxException ignored) {
+        }
+
+        try {
+            // Attempt to escape the input as an IPv6 literal
+            java.net.URI uri = new java.net.URI("moonlight://[" + rawUserInput + "]");
+            if (uri.getHost() != null && !uri.getHost().isEmpty()) {
+                return uri;
+            }
+        } catch (java.net.URISyntaxException ignored) {
+        }
+
+        return null;
     }
 
     private void startPairingService(final ComputerDetails computer) {

@@ -44,6 +44,7 @@
     <string name="pair_fail">Pairing failed</string>
     <string name="pair_already_in_progress">Pairing already in progress</string>
     <string name="pair_pin_copied">PIN copied to clipboard</string>
+    <string name="pair_browser_open_failed">Failed to open browser</string>
 
     <!-- Pairing notification -->
     <string name="pairing_notification_channel_name">Pairing</string>

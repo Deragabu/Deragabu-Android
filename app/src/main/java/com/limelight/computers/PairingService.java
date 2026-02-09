@@ -9,8 +9,11 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Binder;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.widget.Toast;
 
 import com.limelight.LimeLog;
@@ -23,7 +26,6 @@ import com.limelight.nvstream.http.PairingManager;
 import com.limelight.nvstream.http.PairingManager.PairState;
 
 import java.io.FileNotFoundException;
-import java.io.IOException;
 import java.net.UnknownHostException;
 import java.security.cert.X509Certificate;
 
@@ -39,7 +41,6 @@ public class PairingService extends Service {
     public static final String EXTRA_SERVER_CERT = "server_cert";
     public static final String EXTRA_UNIQUE_ID = "unique_id";
 
-    public static final String ACTION_COPY_PIN = "com.limelight.COPY_PIN";
     public static final String ACTION_CANCEL_PAIRING = "com.limelight.CANCEL_PAIRING";
 
     private NotificationManager notificationManager;
@@ -96,15 +97,7 @@ public class PairingService extends Service {
         }
 
         String action = intent.getAction();
-        if (ACTION_COPY_PIN.equals(action)) {
-            if (currentPin != null) {
-                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                ClipData clip = ClipData.newPlainText("PIN", currentPin);
-                clipboard.setPrimaryClip(clip);
-                Toast.makeText(this, R.string.pair_pin_copied, Toast.LENGTH_SHORT).show();
-            }
-            return START_STICKY;
-        } else if (ACTION_CANCEL_PAIRING.equals(action)) {
+        if (ACTION_CANCEL_PAIRING.equals(action)) {
             cancelled = true;
             if (pairingThread != null) {
                 pairingThread.interrupt();
@@ -130,8 +123,16 @@ public class PairingService extends Service {
         // Generate PIN
         currentPin = PairingManager.generatePinString();
 
+        // Auto-copy PIN to clipboard
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        ClipData clip = ClipData.newPlainText("PIN", currentPin);
+        clipboard.setPrimaryClip(clip);
+
         // Show notification
         showPairingNotification(computerName, currentPin);
+
+        // Open browser to the server's web page for pairing
+        openPairingWebPage(computerAddress, httpsPort);
 
         // Start pairing in background
         cancelled = false;
@@ -142,19 +143,37 @@ public class PairingService extends Service {
         return START_STICKY;
     }
 
+    private void openPairingWebPage(String computerAddress, int httpsPort) {
+        try {
+            // Build the URL for the server's web interface
+            String host = computerAddress;
+            // Wrap IPv6 addresses in brackets
+            if (host.contains(":") && !host.startsWith("[")) {
+                host = "[" + host + "]";
+            }
+
+            // Use the HTTPS port for the web interface (default 47984)
+            int port = httpsPort > 0 ? httpsPort : 47984;
+            String url = "https://" + host + ":" + port;
+
+            Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            browserIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(browserIntent);
+        } catch (Exception e) {
+            LimeLog.warning("Failed to open browser: " + e.getMessage());
+            // Show toast on main thread
+            new Handler(Looper.getMainLooper()).post(() ->
+                Toast.makeText(this, R.string.pair_browser_open_failed, Toast.LENGTH_SHORT).show()
+            );
+        }
+    }
+
     private void showPairingNotification(String computerName, String pin) {
         // Intent to open PcView
         Intent openIntent = new Intent(this, PcView.class);
         openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent openPendingIntent = PendingIntent.getActivity(
                 this, 0, openIntent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
-        );
-
-        // Intent to copy PIN
-        Intent copyIntent = new Intent(this, PairingService.class);
-        copyIntent.setAction(ACTION_COPY_PIN);
-        PendingIntent copyPendingIntent = PendingIntent.getService(
-                this, 1, copyIntent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
         );
 
         // Intent to cancel pairing
@@ -171,13 +190,10 @@ public class PairingService extends Service {
                 .setSmallIcon(R.drawable.app_icon)
                 .setContentTitle(title)
                 .setContentText(content)
-                .setStyle(new Notification.BigTextStyle().bigText(
-                        content + "\n\n" + getString(R.string.pair_pairing_help)))
+                .setStyle(new Notification.BigTextStyle().bigText(content))
                 .setOngoing(true)
                 .setAutoCancel(false)
                 .setContentIntent(openPendingIntent)
-                .addAction(new Notification.Action.Builder(
-                        null, getString(android.R.string.copy), copyPendingIntent).build())
                 .addAction(new Notification.Action.Builder(
                         null, getString(android.R.string.cancel), cancelPendingIntent).build())
                 .setCategory(Notification.CATEGORY_PROGRESS);

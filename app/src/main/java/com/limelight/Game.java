@@ -54,6 +54,7 @@ import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.PowerManager;
 import android.os.IBinder;
 import android.util.Rational;
 import android.view.Display;
@@ -145,7 +146,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private MediaCodecDecoderRenderer decoderRenderer;
     private boolean reportedCrash;
     private WifiManager.WifiLock lowLatencyWifiLock;
+    private PowerManager.WakeLock wakeLock;
     private StatsNotificationHelper statsNotificationHelper;
+    private String activeVideoCodec = "";
 
     private boolean connectedToUsbDriverService = false;
     private ServiceConnection usbDriverServiceConnection = new ServiceConnection() {
@@ -274,6 +277,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             // WifiLock.acquire() even though we have android.permission.WAKE_LOCK in our manifest.
             e.printStackTrace();
         }
+
+        // Acquire a WakeLock to prevent the device from sleeping during streaming
+        PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
+        wakeLock = powerManager.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP, "Moonlight:Streaming");
+        wakeLock.setReferenceCounted(false);
+        wakeLock.acquire();
 
         appName = Game.this.getIntent().getStringExtra(EXTRA_APP_NAME);
         pcName = Game.this.getIntent().getStringExtra(EXTRA_PC_NAME);
@@ -909,6 +918,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         if (lowLatencyWifiLock != null) {
             lowLatencyWifiLock.release();
+        }
+        if (wakeLock != null && wakeLock.isHeld()) {
+            wakeLock.release();
         }
         if (connectedToUsbDriverService) {
             // Unbind from the discovery service
@@ -2446,12 +2458,35 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
+                // Update active video codec info
+                if (decoderRenderer != null) {
+                    int videoFormat = decoderRenderer.getActiveVideoFormat();
+                    activeVideoCodec = getVideoCodecName(videoFormat);
+                }
+
                 performanceOverlayView.setText(text);
                 if (statsNotificationHelper != null) {
-                    statsNotificationHelper.showNotification(text);
+                    statsNotificationHelper.showNotification(text, activeVideoCodec);
                 }
             }
         });
+    }
+
+    private String getVideoCodecName(int videoFormat) {
+        if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_H264) != 0) {
+            return "H.264";
+        } else if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_H265) != 0) {
+            if ((videoFormat & MoonBridge.VIDEO_FORMAT_H265_MAIN10) != 0) {
+                return "HEVC Main10";
+            }
+            return "HEVC";
+        } else if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_AV1) != 0) {
+            if ((videoFormat & MoonBridge.VIDEO_FORMAT_AV1_MAIN10) != 0) {
+                return "AV1 Main10";
+            }
+            return "AV1";
+        }
+        return "Unknown";
     }
 
     @Override

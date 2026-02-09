@@ -8,7 +8,10 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.text.InputType;
+import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.Toast;
 
 import com.limelight.R;
@@ -135,6 +138,69 @@ public class Dialog implements Runnable {
                     rundownDialogs.add(wrapper);
                     alert.show();
                 }
+            }
+        });
+    }
+
+    public interface AddComputerCallback {
+        void onAddComputer(String host);
+    }
+
+    public static void displayAddComputerDialog(final Activity activity, final AddComputerCallback callback) {
+        activity.runOnUiThread(() -> {
+            if (activity.isFinishing())
+                return;
+
+            final EditText input = new EditText(activity);
+            input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+            input.setHint(R.string.ip_hint);
+            input.setSingleLine(true);
+            input.setImeOptions(EditorInfo.IME_ACTION_DONE);
+
+            // Add padding to the EditText
+            int padding = (int) (16 * activity.getResources().getDisplayMetrics().density);
+            input.setPadding(padding, padding, padding, padding);
+
+            AlertDialog alert = new AlertDialog.Builder(activity)
+                    .setTitle(R.string.title_add_pc)
+                    .setView(input)
+                    .setCancelable(true)
+                    .setPositiveButton(android.R.string.ok, null) // Set to null, we'll override below
+                    .setNegativeButton(android.R.string.cancel, (dialog, which) -> dialog.dismiss())
+                    .create();
+
+            alert.setOnShowListener(dialog -> {
+                Button okButton = alert.getButton(AlertDialog.BUTTON_POSITIVE);
+                okButton.setOnClickListener(v -> {
+                    String hostAddress = input.getText().toString().trim();
+                    if (hostAddress.isEmpty()) {
+                        Toast.makeText(activity, R.string.addpc_enter_ip, Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+                    alert.dismiss();
+                    if (callback != null) {
+                        callback.onAddComputer(hostAddress);
+                    }
+                });
+
+                // Handle IME action
+                input.setOnEditorActionListener((v, actionId, event) -> {
+                    if (actionId == EditorInfo.IME_ACTION_DONE) {
+                        okButton.performClick();
+                        return true;
+                    }
+                    return false;
+                });
+
+                // Focus on the input and show keyboard
+                input.requestFocus();
+            });
+
+            synchronized (rundownDialogs) {
+                Dialog wrapper = new Dialog(activity, activity.getString(R.string.title_add_pc), "", null);
+                wrapper.alert = alert;
+                rundownDialogs.add(wrapper);
+                alert.show();
             }
         });
     }
