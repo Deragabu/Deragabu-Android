@@ -1411,22 +1411,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     private void sendTextAsKeyEvents(String text) {
-        android.view.KeyCharacterMap kcm = android.view.KeyCharacterMap.load(android.view.KeyCharacterMap.VIRTUAL_KEYBOARD);
-        android.view.KeyEvent[] events = kcm.getEvents(text.toCharArray());
-        if (events != null) {
-            for (android.view.KeyEvent event : events) {
-                // Translate Android keycode to GFE keycode
-                short translatedKey = keyboardTranslator.translate(event.getKeyCode(), -1);
-                if (translatedKey != 0) {
-                    byte modifiers = getModifierState(event);
-                    if (event.getAction() == android.view.KeyEvent.ACTION_DOWN) {
-                        conn.sendKeyboardInput(translatedKey, KeyboardPacket.KEY_DOWN, modifiers, (byte) 0);
-                    } else if (event.getAction() == android.view.KeyEvent.ACTION_UP) {
-                        conn.sendKeyboardInput(translatedKey, KeyboardPacket.KEY_UP, modifiers, (byte) 0);
-                    }
-                }
-            }
-        }
+        // Send the text directly as UTF-8
+        conn.sendUtf8Text(text);
     }
 
     private byte getLiTouchTypeFromEvent(MotionEvent event) {
