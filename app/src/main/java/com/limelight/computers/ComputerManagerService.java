@@ -23,6 +23,7 @@ import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.nvstream.http.PairingManager;
 import com.limelight.nvstream.mdns.MdnsComputer;
 import com.limelight.nvstream.mdns.MdnsDiscoveryListener;
+import com.limelight.preferences.PreferenceConfiguration;
 import com.limelight.utils.CacheHelper;
 import com.limelight.utils.NetHelper;
 import com.limelight.utils.ServerHelper;
@@ -201,8 +202,10 @@ public class ComputerManagerService extends Service {
             // Set the listener
             ComputerManagerService.this.listener = listener;
 
-            // Start mDNS autodiscovery too
-            discoveryBinder.startDiscovery(MDNS_QUERY_PERIOD_MS);
+            // Start mDNS autodiscovery only if enabled in settings
+            if (PreferenceConfiguration.isMdnsEnabled(ComputerManagerService.this)) {
+                discoveryBinder.startDiscovery(MDNS_QUERY_PERIOD_MS);
+            }
 
             synchronized (pollingTuples) {
                 for (PollingTuple tuple : pollingTuples) {

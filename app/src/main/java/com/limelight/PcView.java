@@ -6,6 +6,7 @@ import java.net.UnknownHostException;
 
 import com.limelight.binding.PlatformBinding;
 import com.limelight.binding.crypto.AndroidCryptoProvider;
+import com.limelight.binding.input.driver.UsbDriverService;
 import com.limelight.computers.ComputerManagerListener;
 import com.limelight.computers.ComputerManagerService;
 import com.limelight.grid.PcGridAdapter;
@@ -65,6 +66,24 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     private ShortcutHelper shortcutHelper;
     private ComputerManagerService.ComputerManagerBinder managerBinder;
     private boolean freezeUpdates, runningPolling, inForeground, completeOnCreateCalled;
+
+    // USB driver service for gamepad support
+    private boolean connectedToUsbDriverService = false;
+    private final ServiceConnection usbDriverServiceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
+            UsbDriverService.UsbDriverBinder binder = (UsbDriverService.UsbDriverBinder) iBinder;
+            binder.setListener(null); // No listener needed at main screen
+            binder.start();
+            connectedToUsbDriverService = true;
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName componentName) {
+            connectedToUsbDriverService = false;
+        }
+    };
+
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         public void onServiceConnected(ComponentName className, IBinder binder) {
             final ComputerManagerService.ComputerManagerBinder localBinder =
@@ -118,7 +137,6 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     private final static int VIEW_DETAILS_ID = 8;
     private final static int FULL_APP_LIST_ID = 9;
     private final static int TEST_NETWORK_ID = 10;
-    private final static int GAMESTREAM_EOL_ID = 11;
 
     private void initializeViews() {
         setContentView(R.layout.activity_pc_view);
@@ -240,7 +258,14 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         bindService(new Intent(PcView.this, ComputerManagerService.class), serviceConnection,
                 Service.BIND_AUTO_CREATE);
 
-        pcGridAdapter = new PcGridAdapter(this, PreferenceConfiguration.readPreferences(this));
+        // Bind to USB driver service early to request gamepad permissions
+        PreferenceConfiguration prefConfig = PreferenceConfiguration.readPreferences(this);
+        if (prefConfig.usbDriver) {
+            bindService(new Intent(this, UsbDriverService.class),
+                    usbDriverServiceConnection, Service.BIND_AUTO_CREATE);
+        }
+
+        pcGridAdapter = new PcGridAdapter(this, prefConfig);
 
         initializeViews();
     }
@@ -296,6 +321,10 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
         if (managerBinder != null) {
             unbindService(serviceConnection);
+        }
+
+        if (connectedToUsbDriverService) {
+            unbindService(usbDriverServiceConnection);
         }
     }
 
@@ -358,13 +387,9 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         if (computer.details.state == ComputerDetails.State.OFFLINE ||
             computer.details.state == ComputerDetails.State.UNKNOWN) {
             menu.add(Menu.NONE, WOL_ID, 1, getResources().getString(R.string.pcview_menu_send_wol));
-            menu.add(Menu.NONE, GAMESTREAM_EOL_ID, 2, getResources().getString(R.string.pcview_menu_eol));
         }
         else if (computer.details.pairState != PairState.PAIRED) {
             menu.add(Menu.NONE, PAIR_ID, 1, getResources().getString(R.string.pcview_menu_pair_pc));
-            if (computer.details.nvidiaServer) {
-                menu.add(Menu.NONE, GAMESTREAM_EOL_ID, 2, getResources().getString(R.string.pcview_menu_eol));
-            }
         }
         else {
             if (computer.details.runningGameId != 0) {
@@ -372,9 +397,6 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                 menu.add(Menu.NONE, QUIT_ID, 2, getResources().getString(R.string.applist_menu_quit));
             }
 
-            if (computer.details.nvidiaServer) {
-                menu.add(Menu.NONE, GAMESTREAM_EOL_ID, 3, getResources().getString(R.string.pcview_menu_eol));
-            }
 
             menu.add(Menu.NONE, FULL_APP_LIST_ID, 4, getResources().getString(R.string.pcview_menu_app_list));
         }
@@ -669,10 +691,6 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
             case TEST_NETWORK_ID:
                 ServerHelper.doNetworkTest(PcView.this);
-                return true;
-
-            case GAMESTREAM_EOL_ID:
-                HelpLauncher.launchGameStreamEolFaq(PcView.this);
                 return true;
 
             default:

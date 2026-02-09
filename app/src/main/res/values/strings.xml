@@ -96,7 +96,7 @@
     <!-- General strings -->
     <string name="ip_hint">IP address of host PC</string>
     <string name="searching_pc">Searching for host PCs on your local network…\n\n
-        Ensure Sunshine is running on your host PC or GameStream is enabled in the GeForce Experience SHIELD settings.</string>
+        Ensure Sunshine is running on your host PC.</string>
     <string name="yes">Yes</string>
     <string name="no">No</string>
     <string name="lost_connection">Lost connection to PC</string>
@@ -231,7 +231,7 @@
 
     <string name="category_host_settings">Host Settings</string>
     <string name="title_checkbox_enable_sops">Optimize game settings</string>
-    <string name="summary_checkbox_enable_sops">Allow GFE to modify game settings for optimal streaming</string>
+    <string name="summary_checkbox_enable_sops">Allow host to modify game settings for optimal streaming</string>
     <string name="title_checkbox_host_audio">Play audio on PC</string>
     <string name="summary_checkbox_host_audio">Play audio from the computer and this device</string>
 
@@ -300,4 +300,8 @@
     <string name="analogscroll_none">None (both sticks move the mouse)</string>
     <string name="analogscroll_right">Right analog stick</string>
     <string name="analogscroll_left">Left analog stick</string>
+
+    <!-- mDNS Settings -->
+    <string name="title_checkbox_enable_mdns">Enable mDNS discovery</string>
+    <string name="summary_checkbox_enable_mdns">Automatically discover host PCs on your local network</string>
 </resources>

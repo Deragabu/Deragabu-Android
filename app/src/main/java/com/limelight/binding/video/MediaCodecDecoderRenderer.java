@@ -217,7 +217,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         }
     }
 
-    private MediaCodecInfo findHevcDecoder(PreferenceConfiguration prefs, boolean meteredNetwork, boolean requestedHdr) {
+    private MediaCodecInfo findHevcDecoder(PreferenceConfiguration prefs, boolean requestedHdr) {
         // Don't return anything if H.264 is forced
         if (prefs.videoFormat == PreferenceConfiguration.FormatOption.FORCE_H264) {
             return null;
@@ -296,7 +296,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     public MediaCodecDecoderRenderer(Activity activity, PreferenceConfiguration prefs,
                                      CrashListener crashListener, int consecutiveCrashCount,
-                                     boolean meteredData, boolean requestedHdr,
+                                     boolean requestedHdr,
                                      String glRenderer, PerfOverlayListener perfListener) {
         //dumpDecoders();
 
@@ -320,7 +320,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             LimeLog.warning("No AVC decoder found");
         }
 
-        hevcDecoder = findHevcDecoder(prefs, meteredData, requestedHdr);
+        hevcDecoder = findHevcDecoder(prefs, requestedHdr);
         if (hevcDecoder != null) {
             LimeLog.info("Selected HEVC decoder: "+hevcDecoder.getName());
         }
