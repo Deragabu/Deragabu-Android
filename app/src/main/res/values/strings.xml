@@ -330,4 +330,5 @@
     <string name="keyboard_input_title">Send Text</string>
     <string name="keyboard_input_hint">Type text to send…</string>
     <string name="keyboard_input_send">Send</string>
+    <string name="keyboard_input_send_enter">Send + Enter</string>
 </resources>

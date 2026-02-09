@@ -87,6 +87,15 @@
             android:minWidth="80dp" />
 
         <Button
+            android:id="@+id/keyboardInputSendEnter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_marginLeft="4dp"
+            android:text="@string/keyboard_input_send_enter"
+            android:minWidth="80dp" />
+
+        <Button
             android:id="@+id/keyboardInputCancel"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

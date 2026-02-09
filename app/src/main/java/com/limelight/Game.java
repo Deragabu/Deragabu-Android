@@ -277,6 +277,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }
             hideKeyboardInputBar();
         });
+        findViewById(R.id.keyboardInputSendEnter).setOnClickListener(v -> {
+            String text = keyboardInputText.getText().toString();
+            if (!text.isEmpty()) {
+                sendTextAsKeyEvents(text);
+            }
+            sendEnterKey();
+            hideKeyboardInputBar();
+        });
         findViewById(R.id.keyboardInputCancel).setOnClickListener(v -> hideKeyboardInputBar());
 
         inputCaptureProvider = InputCaptureManager.getInputCaptureProvider(this);
@@ -1413,6 +1421,13 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private void sendTextAsKeyEvents(String text) {
         // Send the text directly as UTF-8
         conn.sendUtf8Text(text);
+    }
+
+    private void sendEnterKey() {
+        // Send Enter key (0x0d is the virtual key code for Enter)
+        short enterKeyCode = 0x0d;
+        conn.sendKeyboardInput(enterKeyCode, KeyboardPacket.KEY_DOWN, (byte) 0, (byte) 0);
+        conn.sendKeyboardInput(enterKeyCode, KeyboardPacket.KEY_UP, (byte) 0, (byte) 0);
     }
 
     private byte getLiTouchTypeFromEvent(MotionEvent event) {
