@@ -282,7 +282,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             if (!text.isEmpty()) {
                 sendTextAsKeyEvents(text);
             }
-            sendEnterKey();
+            sendEnterKeyDelayed();
             hideKeyboardInputBar();
         });
         findViewById(R.id.keyboardInputCancel).setOnClickListener(v -> hideKeyboardInputBar());
@@ -1428,6 +1428,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         short enterKeyCode = 0x0d;
         conn.sendKeyboardInput(enterKeyCode, KeyboardPacket.KEY_DOWN, (byte) 0, (byte) 0);
         conn.sendKeyboardInput(enterKeyCode, KeyboardPacket.KEY_UP, (byte) 0, (byte) 0);
+    }
+
+    private void sendEnterKeyDelayed() {
+        // Delay sending Enter key to ensure text is processed first
+        streamView.postDelayed(this::sendEnterKey, 500);
     }
 
     private byte getLiTouchTypeFromEvent(MotionEvent event) {
