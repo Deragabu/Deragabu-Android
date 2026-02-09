@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Xbox One Controllers -->
+    <!-- Microsoft -->
+    <usb-device vendor-id="1118" />
+    <!-- Mad Catz -->
+    <usb-device vendor-id="1848" />
+    <!-- Unknown 0x0e6f -->
+    <usb-device vendor-id="3695" />
+    <!-- Hori -->
+    <usb-device vendor-id="3853" />
+    <!-- Razer (Wildcat, Kishi, Kishi V2, Kishi V2 Pro, Kishi Ultra) -->
+    <usb-device vendor-id="5426" />
+    <!-- PowerA -->
+    <usb-device vendor-id="8406" />
+    <!-- PowerA -->
+    <usb-device vendor-id="9414" />
+    <!-- Hyperkin -->
+    <usb-device vendor-id="11812" />
+
+    <!-- Xbox 360 Controllers -->
+    <!-- GPD Win 2 -->
+    <usb-device vendor-id="121" />
+    <!-- Thrustmaster -->
+    <usb-device vendor-id="1103" />
+    <!-- Logitech -->
+    <usb-device vendor-id="1133" />
+    <!-- Elecom -->
+    <usb-device vendor-id="1390" />
+    <!-- Saitek -->
+    <usb-device vendor-id="1699" />
+    <!-- Mad Catz -->
+    <usb-device vendor-id="1848" />
+    <!-- Mad Catz -->
+    <usb-device vendor-id="2047" />
+    <!-- SteelSeries -->
+    <usb-device vendor-id="4152" />
+    <!-- Nacon -->
+    <usb-device vendor-id="4553" />
+    <!-- Ardwiino -->
+    <usb-device vendor-id="4617" />
+    <!-- Unknown 0x12ab -->
+    <usb-device vendor-id="4779" />
+    <!-- RedOctane -->
+    <usb-device vendor-id="5168" />
+    <!-- BigBen -->
+    <usb-device vendor-id="5227" />
+    <!-- Numark -->
+    <usb-device vendor-id="5604" />
+    <!-- Joytech -->
+    <usb-device vendor-id="5678" />
+    <!-- Razer Onza -->
+    <usb-device vendor-id="5769" />
+    <!-- Lab126 (Amazon Luna) -->
+    <usb-device vendor-id="6473" />
+    <!-- Harmonix -->
+    <usb-device vendor-id="7085" />
+    <!-- GameSir -->
+    <usb-device vendor-id="12068" />
+    <!-- 8BitDo -->
+    <usb-device vendor-id="11720" />
+</resources>
+

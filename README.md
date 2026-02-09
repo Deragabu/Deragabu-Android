@@ -12,9 +12,14 @@ You can follow development on our [Discord server](https://moonlight-stream.org/
 ## Features
 * Stream games from your PC to your Android device
 * Support Sunshine
+* **Persistent USB controller permissions** - No need to re-authorize USB controllers every time they reconnect
+  * Supports Xbox One, Xbox 360, and Xbox 360 Wireless controllers
+  * Supports multiple manufacturers: Microsoft, Mad Catz, Razer, PowerA, Hori, and more
+  * **Full Razer Kishi series support**: Kishi, Kishi V2, Kishi V2 Pro, Kishi Ultra
+  * Select "Use by default for this USB device" on first connection for seamless experience
 * On-screen keyboard input with text entry bar
   * **Send** - Send text without Enter key
-  * **Send + Enter** - Send text and automatically press Enter
+  * **Send + Enter** - Send text and automatically press Enter (with 100ms delay for proper text processing)
   * **Cancel** - Close the input bar
 
 ## Building

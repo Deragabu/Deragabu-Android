@@ -157,7 +157,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private String activeVideoCodec = "";
 
     private boolean connectedToUsbDriverService = false;
-    private ServiceConnection usbDriverServiceConnection = new ServiceConnection() {
+    private final ServiceConnection usbDriverServiceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
             UsbDriverService.UsbDriverBinder binder = (UsbDriverService.UsbDriverBinder) iBinder;

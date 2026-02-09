@@ -1,6 +1,65 @@
 # Moonlight Android 修改總結
 
-## 1. Pairing 實現錯誤修復
+## 1. USB 權限持續授權與 Razer Kishi 系列支持
+
+### 問題
+每次連接 USB 遊戲控制器時，Android 都會要求重新授予 USB 權限。這會打斷遊戲體驗。
+
+### 修復內容
+- **usb_device_filter.xml** (新建):
+  - 創建 USB 設備過濾器，聲明支持的所有 Xbox 控制器（Xbox One、Xbox 360、Xbox 360 無線）
+  - 包含所有支持的廠商 ID（Microsoft、Mad Catz、Razer、PowerA、Hori 等）
+  - **明確添加 Razer Kishi 系列支持**：Kishi、Kishi V2、Kishi V2 Pro、Kishi Ultra
+
+- **AndroidManifest.xml**:
+  - 在 `UsbDriverService` 中添加 `USB_DEVICE_ATTACHED` intent-filter
+  - 添加 meta-data 指向 USB 設備過濾器資源
+  - 這樣當支持的 USB 設備連接時，系統會自動授予權限
+
+- **XboxOneController.java**:
+  - 更新 Razer Vendor ID 註釋，明確列出支持的 Kishi 系列型號
+
+- **Xbox360Controller.java**:
+  - 更新 Razer Vendor ID 註釋，包含 Kishi 系列
+
+### 支持的 Razer 控制器
+- Razer Wildcat (Xbox One)
+- Razer Kishi (原版，Android USB-C)
+- Razer Kishi V2 (Android USB-C)
+- Razer Kishi V2 Pro (Android USB-C)
+- Razer Kishi Ultra (Android USB-C)
+- Razer Sabertooth (Xbox 360)
+- Razer Onza (Xbox 360，使用不同的 Vendor ID 0x1689)
+
+### 效果
+- 首次連接 USB 控制器時，系統會詢問是否允許應用使用該設備
+- 勾選「默認使用此應用」後，以後連接相同設備不再需要重新授權
+- 大幅提升用戶體驗，特別是頻繁連接/斷開控制器的場景
+- **Razer Kishi 系列用戶現在可以享受無縫連接體驗**
+
+## 2. 鍵盤輸入欄增強
+
+### 功能
+在鍵盤輸入欄中添加「發送並回車」按鈕，方便在遊戲中快速發送命令。
+
+### 實現內容
+- **activity_game.xml**:
+  - 添加 `keyboardInputSendEnter` 按鈕
+
+- **strings.xml**:
+  - 添加 `keyboard_input_send_enter` 字符串資源
+
+- **Game.java**:
+  - 添加「發送並回車」按鈕的點擊處理程序
+  - 添加 `sendEnterKey()` 方法發送 Enter 鍵事件
+  - 添加 `sendEnterKeyDelayed()` 方法，延遲 100ms 發送 Enter 鍵，確保文字先被處理
+
+### 按鈕說明
+- **Send** - 僅發送文字
+- **Send + Enter** - 發送文字並自動按下回車鍵
+- **Cancel** - 關閉輸入欄
+
+## 3. Pairing 實現錯誤修復
 
 ### 問題
 在 `PairingService` 中創建 `AddressTuple` 時使用了錯誤的端口。應該使用 HTTP 端口（通常是 47989），而不是 HTTPS 端口（通常是 47984）。
@@ -14,7 +73,7 @@
 - **PcView.java**:
   - 在啟動 PairingService 時傳遞 `computer.activeAddress.port`（HTTP 端口）
 
-## 2. 通知權限正確請求（Android 13+）
+## 4. 通知權限正確請求（Android 13+）
 
 ### 問題
 在 Android 13 (API 33+) 上，`POST_NOTIFICATIONS` 權限需要在運行時請求。配對服務啟動前台服務時沒有請求此權限。
@@ -27,7 +86,7 @@
   - 添加 `onRequestPermissionsResult` 處理權限請求結果
   - 將配對服務啟動邏輯提取到 `startPairingService` 方法
 
-## 3. 配對時自動複製 PIN 並打開瀏覽器
+## 5. 配對時自動複製 PIN 並打開瀏覽器
 
 ### 功能
 配對開始時：
@@ -43,7 +102,7 @@
 - **strings.xml**:
   - 添加 `pair_browser_open_failed` 字符串資源
 
-## 4. 簡化添加服務器為對話框
+## 6. 簡化添加服務器為對話框
 
 ### 問題
 原來使用單獨的 Activity (`AddComputerManually`) 來添加服務器，用戶體驗不夠流暢。

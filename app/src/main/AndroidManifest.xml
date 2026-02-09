@@ -191,7 +191,14 @@
             android:exported="false" />
         <service
             android:name=".binding.input.driver.UsbDriverService"
-            android:label="Usb Driver Service" />
+            android:label="Usb Driver Service">
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/usb_device_filter" />
+        </service>
 
         <activity
             android:name=".HelpActivity"

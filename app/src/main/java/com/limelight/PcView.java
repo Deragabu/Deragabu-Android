@@ -75,23 +75,6 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     private boolean freezeUpdates, runningPolling, inForeground, completeOnCreateCalled;
     private ComputerDetails pendingPairComputer;
 
-    // USB driver service for gamepad support
-    private boolean connectedToUsbDriverService = false;
-    private final ServiceConnection usbDriverServiceConnection = new ServiceConnection() {
-        @Override
-        public void onServiceConnected(ComponentName componentName, IBinder iBinder) {
-            UsbDriverService.UsbDriverBinder binder = (UsbDriverService.UsbDriverBinder) iBinder;
-            binder.setListener(null); // No listener needed at main screen
-            binder.start();
-            connectedToUsbDriverService = true;
-        }
-
-        @Override
-        public void onServiceDisconnected(ComponentName componentName) {
-            connectedToUsbDriverService = false;
-        }
-    };
-
     private final ServiceConnection serviceConnection = new ServiceConnection() {
         public void onServiceConnected(ComponentName className, IBinder binder) {
             final ComputerManagerService.ComputerManagerBinder localBinder =
@@ -280,10 +263,6 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
         // Bind to USB driver service early to request gamepad permissions
         PreferenceConfiguration prefConfig = PreferenceConfiguration.readPreferences(this);
-        if (prefConfig.usbDriver) {
-            bindService(new Intent(this, UsbDriverService.class),
-                    usbDriverServiceConnection, Service.BIND_AUTO_CREATE);
-        }
 
         pcGridAdapter = new PcGridAdapter(this, prefConfig);
 
@@ -341,10 +320,6 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
         if (managerBinder != null) {
             unbindService(serviceConnection);
-        }
-
-        if (connectedToUsbDriverService) {
-            unbindService(usbDriverServiceConnection);
         }
     }
 

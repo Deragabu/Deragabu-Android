@@ -30,7 +30,7 @@ public class Xbox360Controller extends AbstractXboxController {
             0x12ab, // Unknown
             0x1430, // RedOctane
             0x146b, // BigBen
-            0x1532, // Razer Sabertooth
+            0x1532, // Razer (Sabertooth, Kishi series)
             0x15e4, // Numark
             0x162e, // Joytech
             0x1689, // Razer Onza
