@@ -962,11 +962,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // that case here too.
         if (isInMultiWindowMode) {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-            decoderRenderer.notifyVideoBackground();
+            /*decoderRenderer.notifyVideoBackground();*/
         }
         else {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-            decoderRenderer.notifyVideoForeground();
+/*            decoderRenderer.notifyVideoForeground();*/
         }
 
         // Correct the system UI visibility flags

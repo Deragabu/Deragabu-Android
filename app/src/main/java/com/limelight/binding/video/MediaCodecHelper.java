@@ -484,7 +484,7 @@ public class MediaCodecHelper {
     }
 
     public static boolean decoderCanDirectSubmit(String decoderName) {
-        return isDecoderInList(directSubmitPrefixes, decoderName) && !isExynos4Device();
+        return isDecoderInList(directSubmitPrefixes, decoderName);
     }
 
     public static boolean decoderNeedsSpsBitstreamRestrictions(String decoderName) {
@@ -778,59 +778,5 @@ public class MediaCodecHelper {
         return null;
     }
 
-    public static String readCpuinfo() throws Exception {
-        StringBuilder cpuInfo = new StringBuilder();
-        try (final BufferedReader br = new BufferedReader(new FileReader(new File("/proc/cpuinfo")))) {
-            for (; ; ) {
-                int ch = br.read();
-                if (ch == -1)
-                    break;
-                cpuInfo.append((char) ch);
-            }
 
-            return cpuInfo.toString();
-        }
-    }
-
-    private static boolean stringContainsIgnoreCase(String string, String substring) {
-        return string.toLowerCase(Locale.ENGLISH).contains(substring.toLowerCase(Locale.ENGLISH));
-    }
-
-    public static boolean isExynos4Device() {
-        try {
-            // Try reading CPU info too look for 
-            String cpuInfo = readCpuinfo();
-
-            // SMDK4xxx is Exynos 4 
-            if (stringContainsIgnoreCase(cpuInfo, "SMDK4")) {
-                LimeLog.info("Found SMDK4 in /proc/cpuinfo");
-                return true;
-            }
-
-            // If we see "Exynos 4" also we'll count it
-            if (stringContainsIgnoreCase(cpuInfo, "Exynos 4")) {
-                LimeLog.info("Found Exynos 4 in /proc/cpuinfo");
-                return true;
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "isExynos4Device: "+e.getMessage(), e);
-        }
-
-        try {
-            File systemDir = new File("/sys/devices/system");
-            File[] files = systemDir.listFiles();
-            if (files != null) {
-                for (File f : files) {
-                    if (stringContainsIgnoreCase(f.getName(), "exynos4")) {
-                        LimeLog.info("Found exynos4 in /sys/devices/system");
-                        return true;
-                    }
-                }
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "isExynos4Device: "+e.getMessage(), e);
-        }
-
-        return false;
-    }
 }

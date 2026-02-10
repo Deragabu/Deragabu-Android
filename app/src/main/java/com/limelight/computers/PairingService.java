@@ -186,7 +186,7 @@ public class PairingService extends Service {
         String content = getString(R.string.pairing_notification_content, pin);
 
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.app_icon)
+                .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle(title)
                 .setContentText(content)
                 .setStyle(new Notification.BigTextStyle().bigText(content))
@@ -202,7 +202,7 @@ public class PairingService extends Service {
 
     private void updateNotificationSuccess(String computerName) {
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.app_icon)
+                .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle(getString(R.string.pairing_notification_success_title))
                 .setContentText(getString(R.string.pairing_notification_success_content, computerName))
                 .setAutoCancel(true)
@@ -214,7 +214,7 @@ public class PairingService extends Service {
 
     private void updateNotificationFailed(String computerName, String reason) {
         Notification.Builder builder = new Notification.Builder(this, CHANNEL_ID)
-                .setSmallIcon(R.drawable.app_icon)
+                .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle(getString(R.string.pairing_notification_failed_title))
                 .setContentText(getString(R.string.pairing_notification_failed_content, computerName, reason))
                 .setAutoCancel(true)

@@ -139,7 +139,7 @@ public class StatsNotificationHelper {
         );
 
         Notification.Builder builder = new Notification.Builder(context, CHANNEL_ID)
-                .setSmallIcon(R.drawable.app_icon)
+                .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle(title)
                 .setContentText(simplifiedStats)
                 .setOngoing(true)
