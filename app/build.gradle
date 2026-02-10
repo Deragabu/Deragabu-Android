@@ -23,7 +23,7 @@ android {
             abiFilters 'arm64-v8a'
         }
 
-        applicationId "com.miHoYo.ys.mi"
+        applicationId "com.antutu.ABenchMark"
     }
 
     buildFeatures {
