@@ -63,7 +63,6 @@ public class NvApp {
     public String toString() {
         StringBuilder str = new StringBuilder();
         str.append("Name: ").append(appName).append("\n");
-        str.append("HDR Supported: ").append(hdrSupported ? "Yes" : "Unknown").append("\n");
         str.append("ID: ").append(appId).append("\n");
         return str.toString();
     }

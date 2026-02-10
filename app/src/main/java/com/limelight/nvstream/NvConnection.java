@@ -231,8 +231,6 @@ public class NvConnection {
             return false;
         }
 
-        ComputerDetails details = h.getComputerDetails(serverInfo);
-        context.isNvidiaServerSoftware = details.nvidiaServer;
 
         // May be missing for older servers
         context.serverGfeVersion = h.getGfeVersion(serverInfo);
@@ -256,11 +254,6 @@ public class NvConnection {
         
         // Check for a supported stream resolution
         if ((context.streamConfig.getWidth() > 4096 || context.streamConfig.getHeight() > 4096) &&
-                (h.getServerCodecModeSupport(serverInfo) & 0x200) == 0 && context.isNvidiaServerSoftware) {
-            context.connListener.displayMessage("Your host PC does not support streaming at resolutions above 4K.");
-            return false;
-        }
-        else if ((context.streamConfig.getWidth() > 4096 || context.streamConfig.getHeight() > 4096) &&
                 (context.streamConfig.getSupportedVideoFormats() & ~MoonBridge.VIDEO_FORMAT_MASK_H264) == 0) {
             context.connListener.displayMessage("Your streaming device must support HEVC or AV1 to stream at resolutions above 4K.");
             return false;

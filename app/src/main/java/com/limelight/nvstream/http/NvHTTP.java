@@ -1,7 +1,5 @@
 package com.limelight.nvstream.http;
 
-import android.os.Build;
-
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -36,8 +34,6 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLHandshakeException;
 import javax.net.ssl.SSLPeerUnverifiedException;
 import javax.net.ssl.SSLSession;
-import javax.net.ssl.SSLSocket;
-import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509KeyManager;
@@ -419,8 +415,8 @@ public class NvHTTP {
                 .build();
     }
 
-    private ResponseBody openHttpConnection(OkHttpClient client, HttpUrl baseUrl, String path) throws IOException {
-        return openHttpConnection(client, baseUrl, path, null);
+    private ResponseBody openHttpConnection(OkHttpClient client, HttpUrl baseUrl) throws IOException {
+        return openHttpConnection(client, baseUrl, "applist", null);
     }
 
     // Read timeout should be enabled for any HTTP query that requires no outside action
@@ -453,10 +449,8 @@ public class NvHTTP {
         }
         
         // Unsuccessful, so close the response body
-        if (body != null) {
-            body.close();
-        }
-        
+        body.close();
+
         if (response.code() == 404) {
             throw new FileNotFoundException(completeUrl.toString());
         }
@@ -556,11 +550,7 @@ public class NvHTTP {
     public boolean supports4K(String serverInfo) throws XmlPullParserException, IOException {
         // Only allow 4K on GFE 3.x. GfeVersion wasn't present on very old versions of GFE.
         String gfeVersionStr = getXmlString(serverInfo, "GfeVersion", false);
-        if (gfeVersionStr == null || gfeVersionStr.startsWith("2.")) {
-            return false;
-        }
-
-        return true;
+        return gfeVersionStr != null && !gfeVersionStr.startsWith("2.");
     }
 
     public int getCurrentGame(String serverInfo) throws IOException, XmlPullParserException {
@@ -578,10 +568,7 @@ public class NvHTTP {
     public int getHttpsPort(String serverInfo) {
         try {
             return Integer.parseInt(getXmlString(serverInfo, "HttpsPort", true));
-        } catch (XmlPullParserException e) {
-            e.printStackTrace();
-            return DEFAULT_HTTPS_PORT;
-        } catch (IOException e) {
+        } catch (XmlPullParserException | IOException e) {
             e.printStackTrace();
             return DEFAULT_HTTPS_PORT;
         }
@@ -712,7 +699,7 @@ public class NvHTTP {
             return getAppListByReader(new StringReader(getAppListRaw()));
         }
         else {
-            try (final ResponseBody resp = openHttpConnection(httpClientLongConnectTimeout, getHttpsUrl(true), "applist")) {
+            try (final ResponseBody resp = openHttpConnection(httpClientLongConnectTimeout, getHttpsUrl(true))) {
                 return getAppListByReader(new InputStreamReader(resp.byteStream()));
             }
         }
@@ -769,27 +756,8 @@ public class NvHTTP {
     }
     
     public boolean launchApp(ConnectionContext context, String verb, int appId, boolean enableHdr) throws IOException, XmlPullParserException {
-        // Using an FPS value over 60 causes SOPS to default to 720p60,
-        // so force it to 0 to ensure the correct resolution is set. We
-        // used to use 60 here but that locked the frame rate to 60 FPS
-        // on GFE 3.20.3.
-        int fps = context.isNvidiaServerSoftware && context.streamConfig.getLaunchRefreshRate() > 60 ?
-                0 : context.streamConfig.getLaunchRefreshRate();
-
+        int fps = context.streamConfig.getLaunchRefreshRate();
         boolean enableSops = context.streamConfig.getSops();
-        if (context.isNvidiaServerSoftware) {
-            // Using an unsupported resolution (not 720p, 1080p, or 4K) causes
-            // GFE to force SOPS to 720p60. This is fine for < 720p resolutions like
-            // 360p or 480p, but it is not ideal for 1440p and other resolutions.
-            // When we detect an unsupported resolution, disable SOPS unless it's under 720p.
-            // FIXME: Detect support resolutions using the serverinfo response, not a hardcoded list
-            if (context.negotiatedWidth * context.negotiatedHeight > 1280 * 720 &&
-                    context.negotiatedWidth * context.negotiatedHeight != 1920 * 1080 &&
-                    context.negotiatedWidth * context.negotiatedHeight != 3840 * 2160) {
-                LimeLog.info("Disabling SOPS due to non-standard resolution: "+context.negotiatedWidth+"x"+context.negotiatedHeight);
-                enableSops = false;
-            }
-        }
 
         String xmlStr = openHttpConnectionToString(httpClientLongConnectNoReadTimeout, getHttpsUrl(true), verb,
             "appid=" + appId +
