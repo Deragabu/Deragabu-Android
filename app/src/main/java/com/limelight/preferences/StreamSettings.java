@@ -243,9 +243,24 @@ public class StreamSettings extends Activity {
                 fps = prefs.getString(PreferenceConfiguration.FPS_PREF_STRING, PreferenceConfiguration.DEFAULT_FPS);
             }
 
+            // Read the current video format setting
+            PreferenceConfiguration.FormatOption videoFormat = PreferenceConfiguration.FormatOption.AUTO;
+            String videoFormatStr = prefs.getString("video_format", "auto");
+            switch (videoFormatStr) {
+                case "auto":
+                    videoFormat = PreferenceConfiguration.FormatOption.AUTO;
+                    break;
+                case "forceav1":
+                    videoFormat = PreferenceConfiguration.FormatOption.FORCE_AV1;
+                    break;
+                case "forceh265":
+                    videoFormat = PreferenceConfiguration.FormatOption.FORCE_HEVC;
+                    break;
+            }
+
             prefs.edit()
                     .putInt(PreferenceConfiguration.BITRATE_PREF_STRING,
-                            PreferenceConfiguration.getDefaultBitrate(res, fps))
+                            PreferenceConfiguration.getDefaultBitrate(res, fps, videoFormat))
                     .apply();
         }
 
@@ -608,6 +623,20 @@ public class StreamSettings extends Activity {
 
                     // Write the new bitrate value
                     resetBitrateToDefault(prefs, null, valueStr);
+
+                    // Allow the original preference change to take place
+                    return true;
+                }
+            });
+
+            // Add a listener to the video format preference to auto-adjust bitrate when codec changes
+            findPreference("video_format").setOnPreferenceChangeListener(new Preference.OnPreferenceChangeListener() {
+                @Override
+                public boolean onPreferenceChange(Preference preference, Object newValue) {
+                    SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(SettingsFragment.this.getActivity());
+
+                    // Write the new bitrate value based on the new codec
+                    resetBitrateToDefault(prefs, null, null);
 
                     // Allow the original preference change to take place
                     return true;
