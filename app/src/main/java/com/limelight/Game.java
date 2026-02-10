@@ -117,7 +117,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     private ControllerHandler controllerHandler;
     private KeyboardTranslator keyboardTranslator;
-    private VirtualController virtualController;
 
     private PreferenceConfiguration prefConfig;
     private SharedPreferences tombstonePrefs;
@@ -508,10 +507,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             // of gamepads removed and replugged at runtime.
             gamepadMask = 1;
         }
-        if (prefConfig.onscreenController) {
-            // If we're using OSC, always set at least gamepad 1.
-            gamepadMask |= 1;
-        }
 
         // Set to the optimal mode for streaming
         float displayRefreshRate = prepareDisplayForRendering();
@@ -562,7 +557,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 new ComputerDetails.AddressTuple(host, port),
                 httpsPort, uniqueId, config,
                 PlatformBinding.getCryptoProvider(this), serverCert);
-        controllerHandler = new ControllerHandler(this, conn, this, prefConfig);
+        controllerHandler = new ControllerHandler(this, conn, prefConfig);
         keyboardTranslator = new KeyboardTranslator();
 
         InputManager inputManager = (InputManager) getSystemService(Context.INPUT_SERVICE);
@@ -577,15 +572,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         REFERENCE_HORIZ_RES, REFERENCE_VERT_RES,
                         streamView, prefConfig);
             }
-        }
-
-        if (prefConfig.onscreenController) {
-            // create virtual onscreen controller
-            virtualController = new VirtualController(controllerHandler,
-                    (FrameLayout) streamView.getParent(),
-                    this);
-            virtualController.refreshLayout();
-            virtualController.show();
         }
 
         if (prefConfig.usbDriver) {
@@ -630,21 +616,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // For semi-square displays, we use more complex logic to determine which orientation to use (if any)
         if (PreferenceConfiguration.isSquarishScreen(display)) {
-            int desiredOrientation = Configuration.ORIENTATION_UNDEFINED;
-
-            // OSC doesn't properly support portrait displays, so don't use it in portrait mode by default
-            if (prefConfig.onscreenController) {
-                desiredOrientation = Configuration.ORIENTATION_LANDSCAPE;
-            }
-
-            // For native resolution, we will lock the orientation to the one that matches the specified resolution
-            if (PreferenceConfiguration.isNativeResolution(prefConfig.width, prefConfig.height)) {
-                if (prefConfig.width > prefConfig.height) {
-                    desiredOrientation = Configuration.ORIENTATION_LANDSCAPE;
-                } else {
-                    desiredOrientation = Configuration.ORIENTATION_PORTRAIT;
-                }
-            }
+            int desiredOrientation = getDesiredOrientation();
 
             if (desiredOrientation == Configuration.ORIENTATION_LANDSCAPE) {
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE);
@@ -660,6 +632,21 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
     }
 
+    private int getDesiredOrientation() {
+        int desiredOrientation = Configuration.ORIENTATION_UNDEFINED;
+
+
+        // For native resolution, we will lock the orientation to the one that matches the specified resolution
+        if (PreferenceConfiguration.isNativeResolution(prefConfig.width, prefConfig.height)) {
+            if (prefConfig.width > prefConfig.height) {
+                desiredOrientation = Configuration.ORIENTATION_LANDSCAPE;
+            } else {
+                desiredOrientation = Configuration.ORIENTATION_PORTRAIT;
+            }
+        }
+        return desiredOrientation;
+    }
+
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
@@ -667,18 +654,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // Set requested orientation for possible new screen size
         setPreferredOrientationForCurrentDisplay();
 
-        if (virtualController != null) {
-            // Refresh layout of OSC for possible new screen size
-            virtualController.refreshLayout();
-        }
 
         // Hide on-screen overlays in PiP mode
         if (isInPictureInPictureMode()) {
             isHidingOverlays = true;
-
-            if (virtualController != null) {
-                virtualController.hide();
-            }
 
             performanceOverlayView.setVisibility(View.GONE);
             notificationOverlayView.setVisibility(View.GONE);
@@ -691,11 +670,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         } else {
             isHidingOverlays = false;
 
-            // Restore overlays to previous state when leaving PiP
-
-            if (virtualController != null) {
-                virtualController.show();
-            }
 
             if (prefConfig.enablePerfOverlay) {
                 performanceOverlayView.setVisibility(View.VISIBLE);
@@ -1062,9 +1036,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         SpinnerDialog.closeDialogs(this);
         Dialog.closeDialogs();
 
-        if (virtualController != null) {
-            virtualController.hide();
-        }
 
         if (conn != null) {
             int videoFormat = decoderRenderer.getActiveVideoFormat();
@@ -2217,13 +2188,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }
             // This case is for fingers
             else {
-                if (virtualController != null &&
-                        (virtualController.getControllerMode() == VirtualController.ControllerMode.MoveButtons ||
-                                virtualController.getControllerMode() == VirtualController.ControllerMode.ResizeButtons)) {
-                    // Ignore presses when the virtual controller is being configured
-                    return true;
-                }
-
                 // If this is the parent view, we'll offset our coordinates to appear as if they
                 // are relative to the StreamView like our StreamView touch events are.
                 float xOffset, yOffset;
