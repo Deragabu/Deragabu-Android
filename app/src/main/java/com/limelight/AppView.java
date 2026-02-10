@@ -17,7 +17,6 @@ import com.limelight.ui.AdapterFragmentCallbacks;
 import com.limelight.utils.CacheHelper;
 import com.limelight.utils.Dialog;
 import com.limelight.utils.ServerHelper;
-import com.limelight.utils.ShortcutHelper;
 import com.limelight.utils.SpinnerDialog;
 import com.limelight.utils.UiHelper;
 
@@ -30,7 +29,6 @@ import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.util.Log;
@@ -40,8 +38,6 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.widget.AbsListView;
-import android.widget.AdapterView;
-import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -54,7 +50,6 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
     private static final String TAG = "AppView";
     private AppGridAdapter appGridAdapter;
     private String uuidString;
-    private ShortcutHelper shortcutHelper;
 
     private ComputerDetails computer;
     private ComputerManagerService.ApplistPoller poller;
@@ -100,9 +95,6 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
                         return;
                     }
 
-                    // Add a launcher shortcut for this PC (forced, since this is user interaction)
-                    shortcutHelper.createAppViewShortcut(computer, true, getIntent().getBooleanExtra(NEW_PAIR_EXTRA, false));
-                    shortcutHelper.reportComputerShortcutUsed(computer);
 
                     try {
                         appGridAdapter = new AppGridAdapter(AppView.this,
@@ -210,17 +202,10 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
 
             // Close immediately if the PC is no longer paired
             if (details.state == ComputerDetails.State.ONLINE && details.pairState != PairingManager.PairState.PAIRED) {
-                AppView.this.runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        // Disable shortcuts referencing this PC for now
-                        shortcutHelper.disableComputerShortcut(details,
-                                getResources().getString(R.string.scut_not_paired));
-
-                        // Display a toast to the user and quit the activity
-                        Toast.makeText(AppView.this, getResources().getText(R.string.scut_not_paired), Toast.LENGTH_SHORT).show();
-                        finish();
-                    }
+                AppView.this.runOnUiThread(() -> {
+                    // Display a toast to the user and quit the activity
+                    Toast.makeText(AppView.this, getResources().getText(R.string.scut_not_paired), Toast.LENGTH_SHORT).show();
+                    finish();
                 });
 
                 return;
@@ -283,7 +268,6 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
         // between binding to CMS and onResume()
         inForeground = true;
 
-        shortcutHelper = new ShortcutHelper(this);
 
         UiHelper.setLocale(this);
 
@@ -409,18 +393,6 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
         }
 
         menu.add(Menu.NONE, VIEW_DETAILS_ID, 4, getResources().getString(R.string.applist_menu_details));
-
-        // Only add an option to create shortcut if box art is loaded
-        // and when we're in grid-mode (not list-mode).
-        ImageView appImageView = info.targetView.findViewById(R.id.grid_image);
-        if (appImageView != null) {
-            // We have a grid ImageView, so we must be in grid-mode
-            BitmapDrawable drawable = (BitmapDrawable) appImageView.getDrawable();
-            if (drawable != null && drawable.getBitmap() != null) {
-                // We have a bitmap loaded too
-                menu.add(Menu.NONE, CREATE_SHORTCUT_ID, 5, getResources().getString(R.string.applist_menu_scut));
-            }
-        }
     }
 
     @Override
@@ -487,9 +459,6 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
             case CREATE_SHORTCUT_ID:
                 ImageView appImageView = info.targetView.findViewById(R.id.grid_image);
                 Bitmap appBits = ((BitmapDrawable) appImageView.getDrawable()).getBitmap();
-                if (!shortcutHelper.createPinnedGameShortcut(computer, app.app, appBits)) {
-                    Toast.makeText(AppView.this, getResources().getString(R.string.unable_to_pin_shortcut), Toast.LENGTH_LONG).show();
-                }
                 return true;
 
             default:
@@ -549,12 +518,6 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
                 if (!foundExistingApp) {
                     // This app must be new
                     appGridAdapter.addApp(new AppObject(app));
-
-                    // We could have a leftover shortcut from last time this PC was paired
-                    // or if this app was removed then added again. Enable those shortcuts
-                    // again if present.
-                    shortcutHelper.enableAppShortcut(computer, app);
-
                     updated = true;
                 }
             }
@@ -575,7 +538,6 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
 
                 // This app was removed in the latest app list
                 if (!foundExistingApp) {
-                    shortcutHelper.disableAppShortcut(computer, existingApp.app, "App removed from PC");
                     appGridAdapter.removeApp(existingApp);
                     updated = true;
 

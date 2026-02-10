@@ -12,10 +12,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"
         tools:ignore="ForegroundServicesPolicy" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
-    <!-- We don't need a MulticastLock on API level 34+ because we use NsdManager for mDNS -->
-    <uses-permission
-        android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"
-        android:maxSdkVersion="33" />
 
     <uses-feature
         android:name="android.hardware.touchscreen"

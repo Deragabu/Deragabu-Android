@@ -1,10 +1,9 @@
 package com.limelight.binding.video.decoder;
 
-import android.content.Context;
 import android.os.SystemClock;
 
-import com.limelight.R;
 import com.limelight.binding.video.PerfOverlayListener;
+import com.limelight.binding.video.StreamingStats;
 import com.limelight.binding.video.VideoStats;
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.preferences.PreferenceConfiguration;
@@ -24,7 +23,6 @@ public class PerformanceStatsManager {
     private final VideoStats lastWindowVideoStats;
     private final VideoStats globalVideoStats;
 
-    private final Context context;
     private final PreferenceConfiguration prefs;
     private final PerfOverlayListener perfListener;
 
@@ -32,9 +30,8 @@ public class PerformanceStatsManager {
     private int initialWidth;
     private int initialHeight;
 
-    public PerformanceStatsManager(Context context, PreferenceConfiguration prefs,
+    public PerformanceStatsManager(PreferenceConfiguration prefs,
                                     PerfOverlayListener perfListener) {
-        this.context = context;
         this.prefs = prefs;
         this.perfListener = perfListener;
 
@@ -85,8 +82,8 @@ public class PerformanceStatsManager {
     public void updatePerformanceOverlay(String activeDecoderName) {
         if (SystemClock.uptimeMillis() >= activeWindowVideoStats.measurementStartTimestamp + 1000) {
             if (prefs.enablePerfOverlay || prefs.enableStatsNotification) {
-                String perfText = buildPerformanceStatsString(activeDecoderName);
-                perfListener.onPerfUpdate(perfText);
+                StreamingStats stats = buildStreamingStats(activeDecoderName);
+                perfListener.onPerfUpdate(stats);
             }
 
             globalVideoStats.add(activeWindowVideoStats);
@@ -115,35 +112,25 @@ public class PerformanceStatsManager {
     }
 
 
-    private String buildPerformanceStatsString(String activeDecoderName) {
+    private StreamingStats buildStreamingStats(String activeDecoderName) {
         VideoStats lastTwo = new VideoStats();
         lastTwo.add(lastWindowVideoStats);
         lastTwo.add(activeWindowVideoStats);
-        VideoStats.Fps fps = lastTwo.getFps();
 
-        float decodeTimeMs = (float) lastTwo.decoderTimeMs / lastTwo.totalFramesReceived;
         long rttInfo = MoonBridge.getEstimatedRttInfo();
 
-        StringBuilder sb = new StringBuilder();
-        sb.append(context.getString(R.string.perf_overlay_streamdetails,
-                initialWidth + "x" + initialHeight, fps.totalFps)).append('\n');
-        sb.append(context.getString(R.string.perf_overlay_decoder, activeDecoderName)).append('\n');
-        sb.append(context.getString(R.string.perf_overlay_incomingfps, fps.receivedFps)).append('\n');
-        sb.append(context.getString(R.string.perf_overlay_renderingfps, fps.renderedFps)).append('\n');
-        sb.append(context.getString(R.string.perf_overlay_netdrops,
-                (float) lastTwo.framesLost / lastTwo.totalFrames * 100)).append('\n');
-        sb.append(context.getString(R.string.perf_overlay_netlatency,
-                (int) (rttInfo >> 32), (int) rttInfo)).append('\n');
-
-        if (lastTwo.framesWithHostProcessingLatency > 0) {
-            sb.append(context.getString(R.string.perf_overlay_hostprocessinglatency,
-                    (float) lastTwo.minHostProcessingLatency / 10,
-                    (float) lastTwo.maxHostProcessingLatency / 10,
-                    (float) lastTwo.totalHostProcessingLatency / 10 / lastTwo.framesWithHostProcessingLatency)).append('\n');
-        }
-
-        sb.append(context.getString(R.string.perf_overlay_dectime, decodeTimeMs));
-        return sb.toString();
+        return new StreamingStats.Builder()
+                .setResolution(initialWidth, initialHeight)
+                .setFps(lastTwo.getFps())
+                .setDecoderName(activeDecoderName)
+                .setNetworkStats(lastTwo.totalFrames, lastTwo.framesLost, rttInfo)
+                .setHostProcessingLatency(
+                        lastTwo.minHostProcessingLatency,
+                        lastTwo.maxHostProcessingLatency,
+                        lastTwo.totalHostProcessingLatency,
+                        lastTwo.framesWithHostProcessingLatency)
+                .setDecodeTimeMs(lastTwo.decoderTimeMs, lastTwo.totalFramesReceived)
+                .build();
     }
 
     public int getAverageEndToEndLatency() {
