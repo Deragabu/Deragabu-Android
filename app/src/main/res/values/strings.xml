@@ -359,4 +359,13 @@
     <string name="key_pgdn">PgDn</string>
     <string name="key_prtsc">PrtSc</string>
     <string name="key_hide">Hide</string>
+
+    <!-- Back menu options -->
+    <string name="back_menu_title">Menu</string>
+    <string name="back_menu_disconnect">Disconnect</string>
+    <string name="back_menu_special_keys">Special Keys Keyboard</string>
+    <string name="back_menu_text_input">Text Input Keyboard</string>
+    <string name="back_menu_alt_f4">Send Alt+F4</string>
+    <string name="back_menu_ctrl_alt_del">Send Ctrl+Alt+Delete</string>
+    <string name="back_menu_cancel">Cancel</string>
 </resources>

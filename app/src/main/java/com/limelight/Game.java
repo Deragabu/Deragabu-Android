@@ -37,6 +37,7 @@ import com.limelight.utils.UiHelper;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.app.PictureInPictureParams;
 import android.app.Service;
 import android.content.ComponentName;
@@ -1283,6 +1284,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             return true;
         }
 
+        // Intercept back button press (non-mouse) to show back menu
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getRepeatCount() == 0) {
+            // Don't show menu on key down, wait for key up
+            return true;
+        }
+
         boolean handled = false;
 
         if (ControllerHandler.isGameControllerDevice(event.getDevice())) {
@@ -1364,6 +1371,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             return true;
         }
 
+        // Show back menu when back button is released (non-mouse source)
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            showBackMenu();
+            return true;
+        }
+
         boolean handled = false;
         if (ControllerHandler.isGameControllerDevice(event.getDevice())) {
             // Always try the controller handler first, unless it's an alphanumeric keyboard device.
@@ -1427,6 +1440,40 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         else {
             return null;
         }
+    }
+
+    private void cancelAllTouches() {
+        for (TouchContext touchContext : touchContextMap) {
+            touchContext.cancelTouch();
+        }
+    }
+
+    private boolean handleMultiFingerTapGestures(MotionEvent event) {
+        // Only process multi-finger taps when touchscreen trackpad is enabled
+        if (!prefConfig.touchscreenTrackpad) {
+            return false;
+        }
+
+        // Check if all fingers are up (last finger lifting)
+        if (event.getPointerCount() != 1 || (event.getFlags() & MotionEvent.FLAG_CANCELED) != 0) {
+            return false;
+        }
+
+        long currentTime = event.getEventTime();
+
+        // Check for 4 finger tap first (keyboard with input dialog)
+        if (currentTime - fourFingerDownTime < FOUR_FINGER_TAP_THRESHOLD) {
+            showKeyboardWithInput();
+            return true;
+        }
+
+        // Check for 3 finger tap (toggle keyboard with special keys bar)
+        if (currentTime - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
+            toggleKeyboard();
+            return true;
+        }
+
+        return false;
     }
 
     @Override
@@ -1513,6 +1560,16 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     private void sendSpecialKeyWithModifiers(int vkCode) {
         // Get modifier state from toggle buttons
+        byte modifiers = getModifierStateFromToggles();
+
+        short keyCode = (short) (0x80 << 8 | vkCode);
+        sendKeyCombo(keyCode, modifiers);
+
+        // Reset modifier toggle buttons after sending
+        resetModifierToggles();
+    }
+
+    private byte getModifierStateFromToggles() {
         byte modifiers = 0;
         if (modifierCtrl != null && modifierCtrl.isChecked()) {
             modifiers |= KeyboardPacket.MODIFIER_CTRL;
@@ -1526,16 +1583,71 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         if (modifierWin != null && modifierWin.isChecked()) {
             modifiers |= KeyboardPacket.MODIFIER_META;
         }
+        return modifiers;
+    }
 
-        short keyCode = (short) (0x80 << 8 | vkCode);
-        conn.sendKeyboardInput(keyCode, KeyboardPacket.KEY_DOWN, modifiers, (byte) 0);
-        conn.sendKeyboardInput(keyCode, KeyboardPacket.KEY_UP, modifiers, (byte) 0);
-
-        // Reset modifier toggle buttons after sending
+    private void resetModifierToggles() {
         if (modifierCtrl != null) modifierCtrl.setChecked(false);
         if (modifierAlt != null) modifierAlt.setChecked(false);
         if (modifierShift != null) modifierShift.setChecked(false);
         if (modifierWin != null) modifierWin.setChecked(false);
+    }
+
+    private void showBackMenu() {
+        runOnUiThread(() -> {
+            // Menu item indices
+            final int MENU_DISCONNECT = 0;
+            final int MENU_SPECIAL_KEYS = 1;
+            final int MENU_TEXT_INPUT = 2;
+            final int MENU_ALT_F4 = 3;
+            final int MENU_CTRL_ALT_DEL = 4;
+
+            String[] menuItems = {
+                getString(R.string.back_menu_disconnect),
+                getString(R.string.back_menu_special_keys),
+                getString(R.string.back_menu_text_input),
+                getString(R.string.back_menu_alt_f4),
+                getString(R.string.back_menu_ctrl_alt_del),
+                getString(R.string.back_menu_cancel)
+            };
+
+            new AlertDialog.Builder(this)
+                .setTitle(R.string.back_menu_title)
+                .setItems(menuItems, (dialog, which) -> {
+                    if (which == MENU_DISCONNECT) {
+                        finish();
+                    } else if (which == MENU_SPECIAL_KEYS) {
+                        toggleKeyboard();
+                    } else if (which == MENU_TEXT_INPUT) {
+                        showKeyboardWithInput();
+                    } else if (which == MENU_ALT_F4) {
+                        sendAltF4();
+                    } else if (which == MENU_CTRL_ALT_DEL) {
+                        sendCtrlAltDel();
+                    }
+                    // Cancel doesn't need action, dialog auto-dismisses
+                })
+                .setCancelable(true)
+                .show();
+        });
+    }
+
+    private void sendKeyCombo(short keyCode, byte modifiers) {
+        conn.sendKeyboardInput(keyCode, KeyboardPacket.KEY_DOWN, modifiers, (byte) 0);
+        conn.sendKeyboardInput(keyCode, KeyboardPacket.KEY_UP, modifiers, (byte) 0);
+    }
+
+    private void sendAltF4() {
+        // Send Alt+F4 key combination
+        short f4KeyCode = (short) (0x80 << 8 | (KeyboardTranslator.VK_F1 + 3)); // F4
+        sendKeyCombo(f4KeyCode, KeyboardPacket.MODIFIER_ALT);
+    }
+
+    private void sendCtrlAltDel() {
+        // Send Ctrl+Alt+Delete key combination
+        short deleteKeyCode = (short) (0x80 << 8 | 0x2e); // VK_DELETE = 0x2e
+        byte modifiers = (byte) (KeyboardPacket.MODIFIER_CTRL | KeyboardPacket.MODIFIER_ALT);
+        sendKeyCombo(deleteKeyCode, modifiers);
     }
 
     private byte getLiTouchTypeFromEvent(MotionEvent event) {
@@ -2051,43 +2163,28 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 int eventX = (int)(event.getX(actionIndex) + xOffset);
                 int eventY = (int)(event.getY(actionIndex) + yOffset);
 
-                // Special handling for 3 finger gesture
-                if (event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN &&
-                        event.getPointerCount() == 3) {
-                    // Three fingers down
-                    threeFingerDownTime = event.getEventTime();
-
-                    // Cancel the first and second touches to avoid
-                    // erroneous events
-                    for (TouchContext aTouchContext : touchContextMap) {
-                        aTouchContext.cancelTouch();
+                // Special handling for multi-finger gestures (only when touchscreen trackpad is enabled)
+                if (prefConfig.touchscreenTrackpad && event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN) {
+                    int pointerCount = event.getPointerCount();
+                    if (pointerCount == 3) {
+                        // Three fingers down
+                        threeFingerDownTime = event.getEventTime();
+                        cancelAllTouches();
+                        return true;
+                    } else if (pointerCount == 4) {
+                        // Four fingers down
+                        fourFingerDownTime = event.getEventTime();
+                        cancelAllTouches();
+                        return true;
                     }
-
-                    return true;
                 }
 
-                // Special handling for 4 finger gesture
-                if (event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN &&
-                        event.getPointerCount() == 4) {
-                    // Four fingers down
-                    fourFingerDownTime = event.getEventTime();
-
-                    // Cancel all touches to avoid erroneous events
-                    for (TouchContext aTouchContext : touchContextMap) {
-                        aTouchContext.cancelTouch();
-                    }
-
-                    return true;
-                }
-
-                // TODO: Re-enable native touch when have a better solution for handling
-                // cancelled touches from Android gestures and 3 finger taps to activate
-                // the software keyboard.
-                /*if (!prefConfig.touchscreenTrackpad && trySendTouchEvent(view, event)) {
+                if (!prefConfig.touchscreenTrackpad && trySendTouchEvent(view, event)) {
                     // If this host supports touch events and absolute touch is enabled,
                     // send it directly as a touch event.
                     return true;
-                }*/
+                }
+
 
                 TouchContext context = getTouchContext(actionIndex);
                 if (context == null) {
@@ -2105,20 +2202,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     break;
                 case MotionEvent.ACTION_POINTER_UP:
                 case MotionEvent.ACTION_UP:
-                    if (event.getPointerCount() == 1 && (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0) {
-                        // All fingers up
-                        // Check for 4 finger tap first (keyboard with input dialog)
-                        if (event.getEventTime() - fourFingerDownTime < FOUR_FINGER_TAP_THRESHOLD) {
-                            // This is a 4 finger tap to bring up keyboard with input dialog
-                            showKeyboardWithInput();
-                            return true;
-                        }
-                        // Check for 3 finger tap (toggle keyboard with special keys bar)
-                        if (event.getEventTime() - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
-                            // This is a 3 finger tap to bring up the keyboard with special keys
-                            toggleKeyboard();
-                            return true;
-                        }
+                    // Check for multi-finger tap gestures before processing normal touch
+                    if (handleMultiFingerTapGestures(event)) {
+                        return true;
                     }
 
                     if ((event.getFlags() & MotionEvent.FLAG_CANCELED) != 0) {
