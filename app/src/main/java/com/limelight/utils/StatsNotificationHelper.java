@@ -45,9 +45,10 @@ public class StatsNotificationHelper {
     }
 
     /**
-     * Show notification with structured streaming stats.
+     * Update notification with structured streaming stats.
+     * Creates the notification if it doesn't exist, or updates the existing one.
      */
-    public void showNotification(StreamingStats stats, String videoCodec) {
+    public void updateNotification(StreamingStats stats, String videoCodec) {
         // Check for notification permission before attempting to show
         if (!hasNotificationPermission()) {
             return;
@@ -77,11 +78,6 @@ public class StatsNotificationHelper {
         isShowing = true;
     }
 
-    public void updateNotification(StreamingStats stats, String videoCodec) {
-        if (isShowing) {
-            showNotification(stats, videoCodec);
-        }
-    }
 
     public void cancelNotification() {
         notificationManager.cancel(NOTIFICATION_ID);

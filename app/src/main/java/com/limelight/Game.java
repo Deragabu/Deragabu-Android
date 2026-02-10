@@ -2645,7 +2645,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
             performanceOverlayView.setText(stats.toFullDisplayText(this));
             if (statsNotificationHelper != null) {
-                statsNotificationHelper.showNotification(stats, activeVideoCodec);
+                statsNotificationHelper.updateNotification(stats, activeVideoCodec);
             }
         });
     }

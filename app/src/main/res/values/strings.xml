@@ -322,7 +322,7 @@
     <!-- Notification -->
     <string name="stats_notification_channel_name">Streaming Statistics</string>
     <string name="stats_notification_channel_description">Shows real-time streaming performance statistics</string>
-    <string name="stats_notification_title">Moonlight Streaming</string>
+    <string name="stats_notification_title">Streaming Statistics</string>
 
     <!-- Keyboard Input Dialog -->
     <string name="keyboard_input_title">Send Text</string>
