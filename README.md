@@ -8,15 +8,13 @@ whether in your own home or over the internet.
 ## Features
 * Stream games from your PC to your Android device
 * Support Sunshine
+* Only Supports Android 13+ (targetSdk 34)
+* Only supports ARM64 devices (no x86 support)
+* Only c2 decoding is supported
 * **Persistent USB controller permissions** - No need to re-authorize USB controllers every time they reconnect
-  * Supports Xbox One, Xbox 360, and Xbox 360 Wireless controllers
-  * Supports multiple manufacturers: Microsoft, Mad Catz, Razer, PowerA, Hori, and more
-  * **Full Razer Kishi series support**: Kishi, Kishi V2, Kishi V2 Pro, Kishi Ultra
-  * Select "Use by default for this USB device" on first connection for seamless experience
 * On-screen keyboard input with text entry bar
-  * **Send** - Send text without Enter key
-  * **Send + Enter** - Send text and automatically press Enter
-  * **Cancel** - Close the input bar
+* Auto-copy PIN to clipboard and auto-open browser during pairing process
+* Improved frame statistics tracking and performance monitoring
 
 ## Recent Changes
 
