@@ -104,6 +104,9 @@ public class SeekBarPreference extends Preference {
     private void showDialog() {
         Context context = getContext();
 
+        // Read the latest value from persistent storage
+        currentValue = getPersistedInt(defaultValue);
+
         LinearLayout.LayoutParams params;
         LinearLayout layout = new LinearLayout(context);
         layout.setOrientation(LinearLayout.VERTICAL);
