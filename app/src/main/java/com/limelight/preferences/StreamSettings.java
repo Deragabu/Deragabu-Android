@@ -383,12 +383,8 @@ public class StreamSettings extends Activity {
                 int width = Math.max(candidate.getPhysicalWidth(), candidate.getPhysicalHeight());
                 int height = Math.min(candidate.getPhysicalWidth(), candidate.getPhysicalHeight());
 
-                // Some TVs report strange values here, so let's avoid native resolutions on a TV
-                // unless they report greater than 4K resolutions.
-                if (!getActivity().getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEVISION) ||
-                        (width > 3840 || height > 2160)) {
-                    addNativeResolutionEntries(width, height, hasInsets);
-                }
+                // Add native resolution entries for all devices
+                addNativeResolutionEntries(width, height, hasInsets);
 
                 if ((width >= 3840 || height >= 2160) && maxSupportedResW < 3840) {
                     maxSupportedResW = 3840;

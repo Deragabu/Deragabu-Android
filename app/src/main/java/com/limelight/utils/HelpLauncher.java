@@ -2,7 +2,6 @@ package com.limelight.utils;
 
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.net.Uri;
 
 import com.limelight.HelpActivity;
@@ -13,15 +12,8 @@ public class HelpLauncher {
         try {
             Intent i = new Intent(Intent.ACTION_VIEW);
             i.setData(Uri.parse(url));
-
-            // Several Android TV devices will lie and say they do have a browser even though the OS
-            // just shows an error dialog if we try to use it. We used to try to be clever and check
-            // the package name of the resolved intent, but it's not worth it anymore with Android 11's
-            // package visibility changes. We'll just always use the WebView on Android TV.
-            if (!context.getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
-                context.startActivity(i);
-                return;
-            }
+            context.startActivity(i);
+            return;
         } catch (Exception e) {
             // This is only supposed to throw ActivityNotFoundException but
             // it can (at least) also throw SecurityException if a user's default
@@ -30,8 +22,7 @@ public class HelpLauncher {
             // Fall through
         }
 
-        // This platform has no browser (possibly a leanback device)
-        // We'll launch our WebView activity
+        // This platform has no browser, use our WebView activity
         Intent i = new Intent(context, HelpActivity.class);
         i.setData(Uri.parse(url));
         context.startActivity(i);

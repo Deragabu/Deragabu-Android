@@ -45,7 +45,6 @@ import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
-import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.hardware.input.InputManager;
@@ -972,17 +971,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // Set the desired refresh rate that will get passed into setFrameRate() later
         desiredRefreshRate = displayRefreshRate;
 
-        if (getPackageManager().hasSystemFeature(PackageManager.FEATURE_TELEVISION) ||
-                getPackageManager().hasSystemFeature(PackageManager.FEATURE_LEANBACK)) {
-            // TVs may take a few moments to switch refresh rates, and we can probably assume
-            // it will be eventually activated.
-            // TODO: Improve this
-            return displayRefreshRate;
-        } else {
-            // Use the lower of the current refresh rate and the selected refresh rate.
-            // The preferred refresh rate may not actually be applied (ex: Battery Saver mode).
-            return Math.min(getWindowManager().getDefaultDisplay().getRefreshRate(), displayRefreshRate);
-        }
+        // Use the lower of the current refresh rate and the selected refresh rate.
+        // The preferred refresh rate may not actually be applied (ex: Battery Saver mode).
+        return Math.min(getWindowManager().getDefaultDisplay().getRefreshRate(), displayRefreshRate);
     }
 
     @SuppressLint("InlinedApi")

@@ -58,7 +58,7 @@ public class DiscoveryService extends Service {
         // with jmDNS (specifically handling multiple addresses for a single service). There are
         // also documented reliability bugs early in the Android 4.x series shortly after it was
         // introduced. The benefit of using NsdManager over jmDNS is that it works correctly in
-        // environments where mDNS proxying is required, like ChromeOS, WSA, and the emulator.
+        // environments where mDNS proxying is required, like WSA and the emulator.
         //
         // As such, we use the jmDNS-based MdnsDiscoveryAgent prior to Android 14 and NsdManager
         // on Android 14 and above.
