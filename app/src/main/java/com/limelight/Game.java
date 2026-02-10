@@ -1489,10 +1489,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 shiftPressed = false;
                 winPressed = false;
                 updateModifierButtonStates();
-                // Show soft keyboard
+                // Show soft keyboard with delay to ensure dialog is fully closed
                 streamView.requestFocus();
-                InputMethodManager inputManager = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-                inputManager.showSoftInput(streamView, InputMethodManager.SHOW_IMPLICIT);
+                streamView.postDelayed(() -> {
+                    InputMethodManager inputManager = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                    inputManager.showSoftInput(streamView, InputMethodManager.SHOW_IMPLICIT);
+                }, 100);
             }
         });
     }
