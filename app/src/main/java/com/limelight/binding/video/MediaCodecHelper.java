@@ -1,12 +1,8 @@
 package com.limelight.binding.video;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -24,12 +20,12 @@ import android.os.Build;
 import android.util.Log;
 
 import com.limelight.LimeLog;
-import com.limelight.preferences.PreferenceConfiguration;
 
 @SuppressWarnings("RedundantSuppression")
 public class MediaCodecHelper {
 
     private static final String TAG = "MediaCodecHelper";
+    @SuppressWarnings("MismatchedQueryAndUpdateOfCollection")
     private static final List<String> preferredDecoders;
 
     private static final List<String> blacklistedDecoderPrefixes;
@@ -346,6 +342,7 @@ public class MediaCodecHelper {
         return isDecoderInList(qualcommDecoderPrefixes, decoderName) && !isAdreno620;
     }
 
+    @SuppressWarnings("UnusedReturnValue")
     public static boolean setDecoderLowLatencyOptions(MediaFormat videoFormat, MediaCodecInfo decoderInfo, int tryNumber) {
         // Options here should be tried in the order of most to least risky. The decoder will use
         // the first MediaFormat that doesn't fail in configure().

@@ -1,6 +1,5 @@
 package com.limelight.binding.input;
 
-import android.annotation.TargetApi;
 import android.app.Activity;
 import android.content.Context;
 import android.hardware.BatteryState;
@@ -50,6 +49,7 @@ import org.cgutman.shieldcontrollerextensions.SceConnectionType;
 import org.cgutman.shieldcontrollerextensions.SceManager;
 
 import java.util.Map;
+import java.util.Objects;
 
 public class ControllerHandler implements InputManager.InputDeviceListener, UsbDriverListener {
 
@@ -394,12 +394,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             if (hasJoystickAxes(dev)) {
                 totalCount++;
                 // Check if this device has vibration support
-                if (dev.getVibratorManager() != null) {
-                    if (hasQuadAmplitudeControlledRumbleVibrators(dev.getVibratorManager()) ||
-                        hasDualAmplitudeControlledRumbleVibrators(dev.getVibratorManager())) {
-                        vibrationCount++;
-                    }
-                } else if (dev.getVibrator() != null && dev.getVibrator().hasVibrator()) {
+                dev.getVibratorManager();
+                if (hasQuadAmplitudeControlledRumbleVibrators(dev.getVibratorManager()) ||
+                    hasDualAmplitudeControlledRumbleVibrators(dev.getVibratorManager())) {
                     vibrationCount++;
                 }
             }
@@ -442,6 +439,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     private boolean isAssociatedJoystick(InputDevice originalDevice, InputDevice possibleAssociatedJoystick) {
         if (possibleAssociatedJoystick == null) {
             return false;
@@ -460,11 +458,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // Make sure the descriptor matches. This can match in cases where two of the exact same
         // input device are connected, so we perform the name check to exclude that case.
-        if (!possibleAssociatedJoystick.getDescriptor().equals(originalDevice.getDescriptor())) {
-            return false;
-        }
-
-        return true;
+        return possibleAssociatedJoystick.getDescriptor().equals(originalDevice.getDescriptor());
     }
 
     // Called before sending input but after we've determined that this
@@ -2258,7 +2252,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         return new SensorEventListener() {
             private final float[] lastValues = new float[3];
 
-            @SuppressWarnings("deprecation")
             @Override
             public void onSensorChanged(SensorEvent sensorEvent) {
                 // Android will invoke our callback any time we get a new reading,
@@ -2283,7 +2276,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 int zFactor = 1;
 
                 if (needsDeviceOrientationCorrection) {
-                    int deviceRotation = activityContext.getWindowManager().getDefaultDisplay().getRotation();
+                    int deviceRotation = Objects.requireNonNull(activityContext.getDisplay()).getRotation();
                     switch (deviceRotation) {
                         case Surface.ROTATION_0:
                         case Surface.ROTATION_180:

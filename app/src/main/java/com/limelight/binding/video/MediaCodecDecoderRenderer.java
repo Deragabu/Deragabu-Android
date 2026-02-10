@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
+import java.util.Objects;
 import java.util.concurrent.LinkedBlockingQueue;
 
 import com.limelight.LimeLog;
@@ -30,7 +31,6 @@ import android.util.Log;
 import android.view.Choreographer;
 import android.view.SurfaceHolder;
 
-@SuppressWarnings("deprecation")
 public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements Choreographer.FrameCallback,
         CodecRecoveryManager.CodecRecoveryCallback {
     private static final String TAG = "MediaCodecDecoderRenderer";
@@ -526,7 +526,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             return;
         }
 
-        frameTimeNanos -= activity.getWindowManager().getDefaultDisplay().getAppVsyncOffsetNanos();
+        frameTimeNanos -= Objects.requireNonNull(activity.getDisplay()).getAppVsyncOffsetNanos();
 
         // Don't render unless a new frame is due. This prevents microstutter when streaming
         // at a frame rate that doesn't match the display (such as 60 FPS on 120 Hz).

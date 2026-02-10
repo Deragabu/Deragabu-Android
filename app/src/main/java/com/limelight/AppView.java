@@ -20,7 +20,6 @@ import com.limelight.utils.ServerHelper;
 import com.limelight.utils.SpinnerDialog;
 import com.limelight.utils.UiHelper;
 
-import android.app.Activity;
 import android.app.Service;
 import android.content.ComponentName;
 import android.content.Intent;
@@ -43,10 +42,12 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.AdapterView.AdapterContextMenuInfo;
 
+import androidx.fragment.app.FragmentActivity;
+
 import org.xmlpull.v1.XmlPullParserException;
 
-@SuppressWarnings({"deprecation", "NullableProblems"})
-public class AppView extends Activity implements AdapterFragmentCallbacks {
+@SuppressWarnings({"NullableProblems"})
+public class AppView extends FragmentActivity implements AdapterFragmentCallbacks {
     private static final String TAG = "AppView";
     private AppGridAdapter appGridAdapter;
     private String uuidString;
@@ -132,7 +133,7 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
                         // cause the activity to be destroyed when we try to commit
                         // I haven't been able to, so we have this try-catch block.
                         try {
-                            getFragmentManager().beginTransaction()
+                            getSupportFragmentManager().beginTransaction()
                                     .replace(R.id.appFragmentContainer, new AdapterFragment())
                                     .commitAllowingStateLoss();
                         } catch (IllegalStateException e) {
@@ -160,7 +161,7 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
 
             try {
                 // Reinflate the app grid itself to pick up the layout change
-                getFragmentManager().beginTransaction()
+                getSupportFragmentManager().beginTransaction()
                         .replace(R.id.appFragmentContainer, new AdapterFragment())
                         .commitAllowingStateLoss();
             } catch (IllegalStateException e) {

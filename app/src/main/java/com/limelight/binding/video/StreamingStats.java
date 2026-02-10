@@ -1,5 +1,6 @@
 package com.limelight.binding.video;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 
 import com.limelight.R;
@@ -63,6 +64,7 @@ public class StreamingStats {
      * Get a simplified one-line summary for notification display.
      * Format: "DecoderName | 1920x1080 60.0 FPS | RTT 5 ms | Dec 2.5 ms | 🎮 2(1)"
      */
+    @SuppressLint("DefaultLocale")
     public String toNotificationText(String videoCodec) {
         StringBuilder sb = new StringBuilder();
 

@@ -2,8 +2,9 @@ package com.limelight.preferences;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.preference.PreferenceDataStore;
 
+import androidx.annotation.Nullable;
+import androidx.preference.PreferenceDataStore;
 
 import com.tencent.mmkv.MMKV;
 
@@ -155,7 +156,7 @@ public class MMKVPreferenceManager {
      * PreferenceDataStore implementation that wraps MMKV.
      * This allows PreferenceFragment to store preferences directly in MMKV.
      */
-    public static class MMKVPreferenceDataStore implements PreferenceDataStore {
+    public static class MMKVPreferenceDataStore extends PreferenceDataStore {
         private final MMKV mmkv;
 
         MMKVPreferenceDataStore(MMKV mmkv) {
@@ -163,7 +164,7 @@ public class MMKVPreferenceManager {
         }
 
         @Override
-        public void putString(String key,  String value) {
+        public void putString(String key, @Nullable String value) {
             if (value == null) {
                 mmkv.removeValueForKey(key);
             } else {
@@ -172,12 +173,13 @@ public class MMKVPreferenceManager {
         }
 
         @Override
-        public String getString(String key,  String defValue) {
+        @Nullable
+        public String getString(String key, @Nullable String defValue) {
             return mmkv.decodeString(key, defValue);
         }
 
         @Override
-        public void putStringSet(String key,  Set<String> values) {
+        public void putStringSet(String key, @Nullable Set<String> values) {
             if (values == null) {
                 mmkv.removeValueForKey(key);
             } else {
@@ -186,7 +188,8 @@ public class MMKVPreferenceManager {
         }
 
         @Override
-        public Set<String> getStringSet(String key, Set<String> defValues) {
+        @Nullable
+        public Set<String> getStringSet(String key, @Nullable Set<String> defValues) {
             return mmkv.decodeStringSet(key, defValues);
         }
 

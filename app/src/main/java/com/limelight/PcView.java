@@ -25,7 +25,6 @@ import com.limelight.utils.HelpLauncher;
 import com.limelight.utils.ServerHelper;
 import com.limelight.utils.UiHelper;
 
-import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.Service;
 import android.content.ComponentName;
@@ -53,12 +52,14 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.AdapterView.AdapterContextMenuInfo;
 
+import androidx.fragment.app.FragmentActivity;
+
 import org.xmlpull.v1.XmlPullParserException;
 
 import com.limelight.utils.VulkanHelper;
 
-@SuppressWarnings({"NullableProblems", "deprecation"})
-public class PcView extends Activity implements AdapterFragmentCallbacks {
+@SuppressWarnings({"NullableProblems"})
+public class PcView extends FragmentActivity implements AdapterFragmentCallbacks {
     private final static String TAG = "PcView";
     private static final int REQUEST_NOTIFICATION_PERMISSION = 1001;
 
@@ -141,7 +142,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         addComputerButton.setOnClickListener(v -> showAddComputerDialog());
         helpButton.setOnClickListener(v -> HelpLauncher.launchSetupGuide(PcView.this));
 
-        getFragmentManager().beginTransaction()
+        getSupportFragmentManager().beginTransaction()
                 .replace(R.id.pcFragmentContainer, new AdapterFragment())
                 .commitAllowingStateLoss();
 

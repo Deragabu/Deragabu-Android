@@ -67,10 +67,10 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.View;
 import android.view.View.OnGenericMotionListener;
-import android.view.View.OnSystemUiVisibilityChangeListener;
 import android.view.View.OnTouchListener;
 import android.view.Window;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.view.inputmethod.InputMethodManager;
@@ -88,10 +88,10 @@ import java.security.cert.X509Certificate;
 import java.util.Locale;
 
 
-@SuppressWarnings({"deprecation", "NullableProblems", "DataFlowIssue", "WriteOnlyObject"})
+@SuppressWarnings({ "NullableProblems", "DataFlowIssue", "WriteOnlyObject"})
 public class Game extends Activity implements SurfaceHolder.Callback,
         OnGenericMotionListener, OnTouchListener, NvConnectionListener,
-        OnSystemUiVisibilityChangeListener, GameGestures, StreamView.InputCallbacks,
+        GameGestures, StreamView.InputCallbacks,
         PerfOverlayListener, UsbDriverService.UsbDriverStateListener, View.OnKeyListener {
     private static final String TAG = "Game";
     private int lastButtonState = 0;
@@ -208,26 +208,35 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // We don't want a title bar
         requestWindowFeature(Window.FEATURE_NO_TITLE);
 
-        // Full-screen
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-
-        // If we're going to use immersive mode, we want to have
-        // the entire screen
-        getWindow().getDecorView().setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-                        View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                        View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN);
-
+        // Full-screen immersive mode setup (before setContentView)
+        getWindow().setDecorFitsSystemWindows(false);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
-
-        // Listen for UI visibility events
-        getWindow().getDecorView().setOnSystemUiVisibilityChangeListener(this);
 
         // Change volume button behavior
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
 
         // Inflate the content
         setContentView(R.layout.activity_game);
+
+        // Set up immersive mode using WindowInsetsController (must be after setContentView)
+        WindowInsetsController insetsController = getWindow().getInsetsController();
+        if (insetsController != null) {
+            // Hide both system bars (status bar and navigation bar)
+            insetsController.hide(WindowInsets.Type.systemBars());
+            // Use immersive sticky behavior - bars will appear temporarily when swiping from edge
+            insetsController.setSystemBarsBehavior(
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        }
+
+        // Listen for window insets changes (replaces deprecated OnSystemUiVisibilityChangeListener)
+        getWindow().getDecorView().setOnApplyWindowInsetsListener((v, insets) -> {
+            // If system bars become visible while connected, schedule hiding them
+            if (connected && insets.isVisible(WindowInsets.Type.systemBars())) {
+                hideSystemUi(2000);
+            }
+            return insets;
+        });
+
 
         // Register back gesture callback for Android 13+
         onBackInvokedCallback = this::showBackMenu;
@@ -432,7 +441,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         boolean willStreamHdr = false;
         if (prefConfig.enableHdr) {
             // Start our HDR checklist
-            Display display = getWindowManager().getDefaultDisplay();
+            Display display = getDisplay();
             Display.HdrCapabilities hdrCaps = display.getHdrCapabilities();
 
             // We must now ensure our display is compatible with HDR10
@@ -609,7 +618,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     private void setPreferredOrientationForCurrentDisplay() {
-        Display display = getWindowManager().getDefaultDisplay();
+        Display display = getDisplay();
 
         // For semi-square displays, we use more complex logic to determine which orientation to use (if any)
         if (PreferenceConfiguration.isSquarishScreen(display)) {
@@ -788,7 +797,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             return false;
         }
 
-        Display display = getWindowManager().getDefaultDisplay();
+        Display display = getDisplay();
         for (Display.Mode candidate : display.getSupportedModes()) {
             // Ignore insets if this is an exact match for the display resolution
             if ((width == candidate.getPhysicalWidth() && height == candidate.getPhysicalHeight()) ||
@@ -901,11 +910,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     private float prepareDisplayForRendering() {
-        Display display = getWindowManager().getDefaultDisplay();
+        Display display = getDisplay();
         WindowManager.LayoutParams windowLayoutParams = getWindow().getAttributes();
         float displayRefreshRate;
 
-        // On M, we can explicitly set the optimal display mode
+        // Explicitly set the optimal display mode
         Display.Mode currentMode = display.getMode();
         Display.Mode bestMode = currentMode;
         boolean isNativeResolutionStream = PreferenceConfiguration.isNativeResolution(prefConfig.width, prefConfig.height);
@@ -979,28 +988,23 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // Use the lower of the current refresh rate and the selected refresh rate.
         // The preferred refresh rate may not actually be applied (ex: Battery Saver mode).
-        return Math.min(getWindowManager().getDefaultDisplay().getRefreshRate(), displayRefreshRate);
+        return Math.min(getDisplay().getRefreshRate(), displayRefreshRate);
     }
 
-    @SuppressLint("InlinedApi")
     private final Runnable hideSystemUi = () -> {
-        // TODO: Do we want to use WindowInsetsController here on R+ instead of
-        // SYSTEM_UI_FLAG_IMMERSIVE_STICKY? They seem to do the same thing as of S...
+        WindowInsetsController insetsController = Game.this.getWindow().getInsetsController();
+        if (insetsController == null) {
+            return;
+        }
 
-        // In multi-window mode on N+, we need to drop our layout flags or we'll
-        // be drawing underneath the system UI.
+        // In multi-window mode, we need to show system bars to avoid drawing underneath the system UI
         if (isInMultiWindowMode()) {
-            Game.this.getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+            insetsController.show(WindowInsets.Type.systemBars());
         } else {
-            // Use immersive mode
-            Game.this.getWindow().getDecorView().setSystemUiVisibility(
-                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-                            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-                            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-                            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-                            View.SYSTEM_UI_FLAG_FULLSCREEN |
-                            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+            // Use immersive mode - hide all system bars
+            insetsController.hide(WindowInsets.Type.systemBars());
+            insetsController.setSystemBarsBehavior(
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
         }
     };
 
@@ -1016,20 +1020,21 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
         super.onMultiWindowModeChanged(isInMultiWindowMode);
 
-        // In multi-window, we don't want to use the full-screen layout
-        // flag. It will cause us to collide with the system UI.
-        // This function will also be called for PiP so we can cover
-        // that case here too.
-        if (isInMultiWindowMode) {
-            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-            /*decoderRenderer.notifyVideoBackground();*/
-        } else {
-            getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
-            /*            decoderRenderer.notifyVideoForeground();*/
+        WindowInsetsController insetsController = getWindow().getInsetsController();
+        if (insetsController == null) {
+            return;
         }
 
-        // Correct the system UI visibility flags
-        hideSystemUi(50);
+        // In multi-window, we need to show system bars to avoid colliding with the system UI.
+        // This function will also be called for PiP so we can cover that case here too.
+        if (isInMultiWindowMode) {
+            insetsController.show(WindowInsets.Type.systemBars());
+        } else {
+            // Return to immersive mode
+            insetsController.hide(WindowInsets.Type.systemBars());
+            insetsController.setSystemBarsBehavior(
+                    WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        }
     }
 
     @SuppressLint("Wakelock")
@@ -2774,20 +2779,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
 
-    @Override
-    public void onSystemUiVisibilityChange(int visibility) {
-        // Don't do anything if we're not connected
-        if (!connected) {
-            return;
-        }
-
-        // This flag is set for all devices
-        if ((visibility & View.SYSTEM_UI_FLAG_FULLSCREEN) == 0) {
-            hideSystemUi(2000);
-        } else if ((visibility & View.SYSTEM_UI_FLAG_HIDE_NAVIGATION) == 0) {
-            hideSystemUi(2000);
-        }
-    }
 
     @Override
     public void onPerfUpdate(final StreamingStats stats) {
