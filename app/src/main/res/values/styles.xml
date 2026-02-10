@@ -14,6 +14,13 @@
         <item name="android:windowNoTitle">true</item>
     </style>
 
+    <!-- Settings theme for AppCompatActivity with PreferenceFragmentCompat -->
+    <style name="SettingsTheme" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="preferenceTheme">@style/PreferenceThemeOverlay.v14.Material</item>
+    </style>
+
     <style name="StreamBaseTheme" parent="AppBaseTheme">
         <!-- Transparent streaming background to avoid extra overdraw -->
         <item name="android:windowBackground">@android:color/transparent</item>

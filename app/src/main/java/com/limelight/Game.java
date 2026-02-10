@@ -208,15 +208,15 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // We don't want a title bar
         requestWindowFeature(Window.FEATURE_NO_TITLE);
 
-        // Full-screen immersive mode setup (before setContentView)
-        getWindow().setDecorFitsSystemWindows(false);
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
-
         // Change volume button behavior
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
 
         // Inflate the content
         setContentView(R.layout.activity_game);
+
+        // Full-screen immersive mode setup (must be after setContentView)
+        getWindow().setDecorFitsSystemWindows(false);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
 
         // Set up immersive mode using WindowInsetsController (must be after setContentView)
         WindowInsetsController insetsController = getWindow().getInsetsController();

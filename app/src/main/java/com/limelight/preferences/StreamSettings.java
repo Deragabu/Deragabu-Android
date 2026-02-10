@@ -276,6 +276,7 @@ public class StreamSettings extends AppCompatActivity {
             UiHelper.applyStatusBarPadding(view);
         }
 
+
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
             // Set MMKV as the preference data store before loading preferences
