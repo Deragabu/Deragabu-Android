@@ -64,7 +64,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     private boolean reportedCrash;
     private final int consecutiveCrashCount;
     private final String glRenderer;
-    private boolean foreground = true;
 
     private MediaFormat inputFormat;
     private MediaFormat outputFormat;
@@ -146,14 +145,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         } else {
             return MoonBridge.COLOR_RANGE_LIMITED;
         }
-    }
-
-    public void notifyVideoForeground() {
-        foreground = true;
-    }
-
-    public void notifyVideoBackground() {
-        foreground = false;
     }
 
     public int getActiveVideoFormat() {
@@ -671,16 +662,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                                 }
                             }
                         } else {
-                            switch (outIndex) {
-                                case MediaCodec.INFO_TRY_AGAIN_LATER:
-                                    break;
-                                case MediaCodec.INFO_OUTPUT_FORMAT_CHANGED:
-                                    LimeLog.info("Output format changed");
-                                    outputFormat = videoDecoder.getOutputFormat();
-                                    LimeLog.info("New output format: " + outputFormat);
-                                    break;
-                                default:
-                                    break;
+                            if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                                LimeLog.info("Output format changed");
+                                outputFormat = videoDecoder.getOutputFormat();
+                                LimeLog.info("New output format: " + outputFormat);
                             }
                         }
                     } catch (IllegalStateException e) {
