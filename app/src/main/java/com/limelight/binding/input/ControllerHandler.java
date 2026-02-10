@@ -144,12 +144,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         this.backgroundHandlerThread.start();
         this.backgroundThreadHandler = new Handler(backgroundHandlerThread.getLooper());
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            this.deviceVibratorManager = (VibratorManager) activityContext.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
-        }
-        else {
-            this.deviceVibratorManager = null;
-        }
+        this.deviceVibratorManager = (VibratorManager) activityContext.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
 
         this.sceManager = new SceManager(activityContext);
         this.sceManager.start();
@@ -389,7 +384,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     if (UsbDriverService.shouldClaimDevice(dev, false) &&
                             !UsbDriverService.isRecognizedInputDevice(dev)) {
                         LimeLog.info("Counting UsbDevice: "+dev.getDeviceName());
-                        mask |= 1 << count++;
+                        mask |= (short) (1 << count++);
                     }
                 }
             }
@@ -470,10 +465,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 for (short i = 0; i < MAX_GAMEPADS; i++) {
                     if ((currentControllers & (1 << i)) == 0) {
                         // Found an unused controller value
-                        currentControllers |= (1 << i);
+                        currentControllers |= (short) (1 << i);
 
                         // Take this value out of the initial gamepad set
-                        initialControllers &= ~(1 << i);
+                        initialControllers &= (short) ~(1 << i);
 
                         context.controllerNumber = i;
                         context.reservedControllerNumber = true;
@@ -584,20 +579,6 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             return false;
         }
 
-        // Landroid/view/InputDevice;->hasButtonUnderPad()Z is blocked after O
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.O) {
-            try {
-                return (Boolean) dev.getClass().getMethod("hasButtonUnderPad").invoke(dev);
-            } catch (NoSuchMethodException e) {
-                e.printStackTrace();
-            } catch (IllegalAccessException e) {
-                e.printStackTrace();
-            } catch (InvocationTargetException e) {
-                e.printStackTrace();
-            } catch (ClassCastException e) {
-                e.printStackTrace();
-            }
-        }
 
         // We can't use the platform API, so we'll have to just guess based on the gamepad type.
         // If this is a PlayStation controller with a touchpad, we know it has a clickpad.
@@ -625,27 +606,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             return false;
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Landroid/view/InputDevice;->isExternal()Z is officially public on Android Q
-            return dev.isExternal();
-        }
-        else {
-            try {
-                // Landroid/view/InputDevice;->isExternal()Z is on the light graylist in Android P
-                return (Boolean)dev.getClass().getMethod("isExternal").invoke(dev);
-            } catch (NoSuchMethodException e) {
-                e.printStackTrace();
-            } catch (IllegalAccessException e) {
-                e.printStackTrace();
-            } catch (InvocationTargetException e) {
-                e.printStackTrace();
-            } catch (ClassCastException e) {
-                e.printStackTrace();
-            }
-        }
+        // Landroid/view/InputDevice;->isExternal()Z is officially public on Android Q
+        return dev.isExternal();
 
         // Answer true if we don't know
-        return true;
     }
 
     private boolean shouldIgnoreBack(InputDevice dev) {
@@ -730,11 +694,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         context.hasShare = MoonBridge.guessControllerHasShareButton(context.vendorId, context.productId);
 
         // Try to use the InputDevice's associated vibrators first
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasQuadAmplitudeControlledRumbleVibrators(dev.getVibratorManager())) {
+        if (hasQuadAmplitudeControlledRumbleVibrators(dev.getVibratorManager())) {
             context.vibratorManager = dev.getVibratorManager();
             context.quadVibrators = true;
         }
-        else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasDualAmplitudeControlledRumbleVibrators(dev.getVibratorManager())) {
+        else if (hasDualAmplitudeControlledRumbleVibrators(dev.getVibratorManager())) {
             context.vibratorManager = dev.getVibratorManager();
             context.quadVibrators = false;
         }
@@ -743,11 +707,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
         else if (!context.external) {
             // If this is an internal controller, try to use the device's vibrator
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasQuadAmplitudeControlledRumbleVibrators(deviceVibratorManager)) {
+            if (hasQuadAmplitudeControlledRumbleVibrators(deviceVibratorManager)) {
                 context.vibratorManager = deviceVibratorManager;
                 context.quadVibrators = true;
             }
-            else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasDualAmplitudeControlledRumbleVibrators(deviceVibratorManager)) {
+            else if (hasDualAmplitudeControlledRumbleVibrators(deviceVibratorManager)) {
                 context.vibratorManager = deviceVibratorManager;
                 context.quadVibrators = false;
             }
@@ -765,22 +729,18 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         // created upon the first call to InputDevice.getSensorManager(), so we avoid calling this
         // on Android 12 unless we have a gamepad that could plausibly have motion sensors.
         // https://cs.android.com/android/_/android/platform/frameworks/base/+/8970010a5e9f3dc5c069f56b4147552accfcbbeb
-        if ((Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ||
-                (Build.VERSION.SDK_INT == Build.VERSION_CODES.S &&
-                        (context.vendorId == 0x054c || context.vendorId == 0x057e))) && // Sony or Nintendo
-                prefConfig.gamepadMotionSensors) {
+        // Sony or Nintendo
+        if (prefConfig.gamepadMotionSensors) {
             if (dev.getSensorManager().getDefaultSensor(Sensor.TYPE_ACCELEROMETER) != null || dev.getSensorManager().getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null) {
                 context.sensorManager = dev.getSensorManager();
             }
         }
 
         // Check if this device has a usable RGB LED and cache that result
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            for (Light light : dev.getLightsManager().getLights()) {
-                if (light.hasRgbControl()) {
-                    context.hasRgbLed = true;
-                    break;
-                }
+        for (Light light : dev.getLightsManager().getLights()) {
+            if (light.hasRgbControl()) {
+                context.hasRgbLed = true;
+                break;
             }
         }
 
@@ -1976,61 +1936,207 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         vm.vibrate(combo.combine(), vibrationAttributes.build());
     }
 
-    private void rumbleSingleVibrator(Vibrator vibrator, short lowFreqMotor, short highFreqMotor) {
-        // Since we can only use a single amplitude value, compute the desired amplitude
-        // by taking 80% of the big motor and 33% of the small motor, then capping to 255.
-        // NB: This value is now 0-255 as required by VibrationEffect.
-        short lowFreqMotorMSB = (short)((lowFreqMotor >> 8) & 0xFF);
-        short highFreqMotorMSB = (short)((highFreqMotor >> 8) & 0xFF);
-        int simulatedAmplitude = Math.min(255, (int)((lowFreqMotorMSB * 0.80) + (highFreqMotorMSB * 0.33)));
+    // Creates a more precise waveform that simulates dual motor vibration
+    // by alternating between low and high frequency patterns
+    private VibrationEffect createDualMotorWaveformEffect(int lowFreqAmplitude, int highFreqAmplitude) {
+        // Low frequency motor: ~130Hz - larger rumble, slower pulses
+        // High frequency motor: ~200Hz - smaller rumble, faster pulses
+        // We simulate this by creating a waveform that interleaves both patterns
 
-        if (simulatedAmplitude == 0) {
-            // This case is easy - just cancel the current effect and get out.
-            // NB: We cannot simply check lowFreqMotor == highFreqMotor == 0
-            // because our simulatedAmplitude could be 0 even though our inputs
-            // are not (ex: lowFreqMotor == 0 && highFreqMotor == 1).
+        // Calculate effective amplitudes (0-255 range)
+        int effectiveLowFreq = Math.min(255, lowFreqAmplitude);
+        int effectiveHighFreq = Math.min(255, highFreqAmplitude);
+
+        // If both are zero, return null (should be handled by caller)
+        if (effectiveLowFreq == 0 && effectiveHighFreq == 0) {
+            return null;
+        }
+
+        // Create a composite waveform that simulates both motors
+        // Low frequency: longer on-time with pauses (rumble feel)
+        // High frequency: shorter, more rapid pulses (buzz feel)
+
+        // Pattern duration: 100ms for one cycle
+        // Low freq component: 50ms on, then high freq component: 25ms on
+        int lowFreqDuration = 30;  // ms - longer pulse for rumble
+        int highFreqDuration = 15; // ms - shorter pulse for buzz
+        int pauseDuration = 5;     // ms - gap between pulses
+
+        if (effectiveLowFreq > 0 && effectiveHighFreq > 0) {
+            // Both motors active: create alternating pattern
+            long[] timings = new long[]{
+                0,                    // start immediately
+                lowFreqDuration,      // low freq pulse
+                pauseDuration,        // pause
+                highFreqDuration,     // high freq pulse
+                pauseDuration,        // pause
+                highFreqDuration,     // another high freq pulse
+                pauseDuration         // pause before repeat
+            };
+            int[] amplitudes = new int[]{
+                0,                                      // start
+                effectiveLowFreq,                       // low freq at full
+                0,                                      // pause
+                (int)(effectiveHighFreq * 0.8),         // high freq slightly reduced
+                0,                                      // pause
+                effectiveHighFreq,                      // high freq at full
+                0                                       // pause
+            };
+            return VibrationEffect.createWaveform(timings, amplitudes, 0);
+        } else if (effectiveLowFreq > 0) {
+            // Only low frequency motor: smooth rumble pattern
+            long[] timings = new long[]{
+                0,
+                lowFreqDuration + 10,  // longer pulse for deeper rumble
+                pauseDuration * 2      // slightly longer pause
+            };
+            int[] amplitudes = new int[]{
+                0,
+                effectiveLowFreq,
+                (int)(effectiveLowFreq * 0.3)  // gradual fade instead of full stop
+            };
+            return VibrationEffect.createWaveform(timings, amplitudes, 0);
+        } else {
+            // Only high frequency motor: rapid buzz pattern
+            long[] timings = new long[]{
+                0,
+                highFreqDuration,
+                pauseDuration,
+                highFreqDuration,
+                pauseDuration
+            };
+            int[] amplitudes = new int[]{
+                0,
+                effectiveHighFreq,
+                (int)(effectiveHighFreq * 0.5),
+                effectiveHighFreq,
+                0
+            };
+            return VibrationEffect.createWaveform(timings, amplitudes, 0);
+        }
+    }
+
+    // Creates haptic composition for API 30+ devices for most precise vibration simulation
+    private VibrationEffect createHapticCompositionEffect(int lowFreqAmplitude, int highFreqAmplitude) {
+        // Use haptic primitives for more realistic feel on supported devices
+        VibrationEffect.Composition composition = VibrationEffect.startComposition();
+
+        // Normalize to 0.0-1.0 scale for primitives
+        float lowFreqScale = lowFreqAmplitude / 255.0f;
+        float highFreqScale = highFreqAmplitude / 255.0f;
+
+        boolean hasContent = false;
+
+        // Low frequency motor simulation using THUD primitive (heavy, low frequency)
+        if (lowFreqScale > 0.05f) {
+            composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_LOW_TICK,
+                Math.min(1.0f, lowFreqScale * 1.2f), 0);
+            hasContent = true;
+        }
+
+        // High frequency motor simulation using TICK primitive (sharp, high frequency)
+        if (highFreqScale > 0.05f) {
+            composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_TICK,
+                Math.min(1.0f, highFreqScale), hasContent ? 20 : 0);
+            hasContent = true;
+        }
+
+        // Add a spin primitive for sustained rumble effect when both motors are active
+        if (lowFreqScale > 0.3f && highFreqScale > 0.3f) {
+            float spinScale = Math.min(1.0f, (lowFreqScale + highFreqScale) / 2.0f);
+            composition.addPrimitive(VibrationEffect.Composition.PRIMITIVE_SPIN,
+                spinScale, 30);
+        }
+
+        if (!hasContent) {
+            return null;
+        }
+
+        try {
+            return composition.compose();
+        } catch (Exception e) {
+            // Some devices may not support all primitives, fall back to null
+            return null;
+        }
+    }
+
+    private void rumbleSingleVibrator(Vibrator vibrator, short lowFreqMotor, short highFreqMotor) {
+        // Normalize motor values to 0-255 range
+        int lowFreqAmplitude = (lowFreqMotor >> 8) & 0xFF;
+        int highFreqAmplitude = (highFreqMotor >> 8) & 0xFF;
+
+        // Cancel vibration if both motors are effectively off
+        if (lowFreqAmplitude == 0 && highFreqAmplitude == 0) {
             vibrator.cancel();
             return;
         }
 
-        // Attempt to use amplitude-based control if we're on Oreo and the device
-        // supports amplitude-based vibration control.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            if (vibrator.hasAmplitudeControl()) {
-                VibrationEffect effect = VibrationEffect.createOneShot(60000, simulatedAmplitude);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    VibrationAttributes vibrationAttributes = new VibrationAttributes.Builder()
-                            .setUsage(VibrationAttributes.USAGE_MEDIA)
-                            .build();
-                    vibrator.vibrate(effect, vibrationAttributes);
-                }
-                else {
-                    AudioAttributes audioAttributes = new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_GAME)
-                            .build();
-                    vibrator.vibrate(effect, audioAttributes);
-                }
-                return;
+        // Calculate combined amplitude for fallback paths using improved formula
+        // Low frequency motor (rumble) contributes more to the overall feel
+        // High frequency motor (buzz) adds texture but shouldn't dominate
+        int simulatedAmplitude = Math.min(255,
+            (int)(lowFreqAmplitude * 0.75 + highFreqAmplitude * 0.4));
+
+        VibrationEffect effect = null;
+
+        // Try haptic composition first (most precise simulation)
+        if (vibrator.hasAmplitudeControl()) {
+            try {
+                effect = createHapticCompositionEffect(lowFreqAmplitude, highFreqAmplitude);
+            } catch (Exception e) {
+                // Haptic composition not fully supported, fall through to waveform
             }
         }
 
-        // If we reach this point, we don't have amplitude controls available, so
-        // we must emulate it by PWMing the vibration. Ick.
-        long pwmPeriod = 20;
-        long onTime = (long)((simulatedAmplitude / 255.0) * pwmPeriod);
-        long offTime = pwmPeriod - onTime;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        // Fall back to waveform-based simulation
+        if (effect == null && vibrator.hasAmplitudeControl()) {
+            effect = createDualMotorWaveformEffect(lowFreqAmplitude, highFreqAmplitude);
+        }
+
+        // Use the effect if we created one successfully
+        if (effect != null) {
             VibrationAttributes vibrationAttributes = new VibrationAttributes.Builder()
                     .setUsage(VibrationAttributes.USAGE_MEDIA)
                     .build();
-            vibrator.vibrate(VibrationEffect.createWaveform(new long[]{0, onTime, offTime}, 0), vibrationAttributes);
+            vibrator.vibrate(effect, vibrationAttributes);
+            return;
         }
-        else {
-            AudioAttributes audioAttributes = new AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_GAME)
+
+        // Fallback: simple amplitude-based vibration for devices with amplitude control
+        if (vibrator.hasAmplitudeControl()) {
+            VibrationEffect simpleEffect = VibrationEffect.createOneShot(60000, simulatedAmplitude);
+            VibrationAttributes vibrationAttributes = new VibrationAttributes.Builder()
+                    .setUsage(VibrationAttributes.USAGE_MEDIA)
                     .build();
-            vibrator.vibrate(new long[]{0, onTime, offTime}, 0, audioAttributes);
+            vibrator.vibrate(simpleEffect, vibrationAttributes);
+            return;
         }
+
+        // Last resort: PWM-based vibration for devices without amplitude control
+        // Use improved PWM with variable frequency to better simulate dual motors
+        long basePwmPeriod = 20;
+
+        // Adjust PWM frequency based on which motor is dominant
+        // Lower frequency for low motor dominant, higher for high motor dominant
+        if (lowFreqAmplitude > highFreqAmplitude * 2) {
+            basePwmPeriod = 25;  // Slower for more rumble feel
+        } else if (highFreqAmplitude > lowFreqAmplitude * 2) {
+            basePwmPeriod = 15;  // Faster for more buzz feel
+        }
+
+        long onTime = (long)((simulatedAmplitude / 255.0) * basePwmPeriod);
+        long offTime = basePwmPeriod - onTime;
+
+        // Ensure minimum on-time for perceptible vibration
+        if (onTime < 2 && simulatedAmplitude > 0) {
+            onTime = 2;
+            offTime = basePwmPeriod - onTime;
+        }
+
+        VibrationAttributes vibrationAttributes = new VibrationAttributes.Builder()
+                .setUsage(VibrationAttributes.USAGE_MEDIA)
+                .build();
+        vibrator.vibrate(VibrationEffect.createWaveform(new long[]{0, onTime, offTime}, 0), vibrationAttributes);
     }
 
     public void handleRumble(short controllerNumber, short lowFreqMotor, short highFreqMotor) {
@@ -2051,7 +2157,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 deviceContext.highFreqMotor = highFreqMotor;
 
                 // Prefer the documented Android 12 rumble API which can handle dual vibrators on PS/Xbox controllers
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && deviceContext.vibratorManager != null) {
+                if (deviceContext.vibratorManager != null) {
                     vibrated = true;
                     if (deviceContext.quadVibrators) {
                         rumbleQuadVibrators(deviceContext.vibratorManager,
