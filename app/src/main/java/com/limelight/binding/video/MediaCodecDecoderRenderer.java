@@ -260,8 +260,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
     }
 
     private MediaCodecInfo findAv1Decoder(PreferenceConfiguration prefs) {
-        // For now, don't use AV1 unless explicitly requested
-        if (prefs.videoFormat != PreferenceConfiguration.FormatOption.FORCE_AV1) {
+        // Don't use AV1 if H.264 is explicitly forced
+        if (prefs.videoFormat == PreferenceConfiguration.FormatOption.FORCE_H264) {
+            return null;
+        }
+
+        // Don't use AV1 if HEVC is explicitly forced
+        if (prefs.videoFormat == PreferenceConfiguration.FormatOption.FORCE_HEVC) {
             return null;
         }
 
@@ -270,7 +275,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             if (!MediaCodecHelper.isDecoderWhitelistedForAv1(decoderInfo)) {
                 LimeLog.info("Found AV1 decoder, but it's not whitelisted - "+decoderInfo.getName());
 
-                // Force HEVC enabled if the user asked for it
+                // Force AV1 enabled if the user asked for it
                 if (prefs.videoFormat == PreferenceConfiguration.FormatOption.FORCE_AV1) {
                     LimeLog.info("Forcing AV1 enabled despite non-whitelisted decoder");
                 }
@@ -279,12 +284,16 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                     LimeLog.info("Using non-whitelisted AV1 decoder to meet performance point");
                 }
                 // Use AV1 if the H.264 decoder is unable to meet the performance point and we have no HEVC decoder
-                else if (hevcDecoder == null && decoderCanMeetPerformancePointWithAv1AndNotAvc(decoderInfo, avcDecoder, prefs)) {
+                else if (hevcDecoder == null && avcDecoder != null && decoderCanMeetPerformancePointWithAv1AndNotAvc(decoderInfo, avcDecoder, prefs)) {
                     LimeLog.info("Using non-whitelisted AV1 decoder to meet performance point");
                 }
                 else {
                     return null;
                 }
+            }
+            else {
+                // AV1 decoder is whitelisted, prefer it when available
+                LimeLog.info("Using whitelisted AV1 decoder: " + decoderInfo.getName());
             }
         }
 

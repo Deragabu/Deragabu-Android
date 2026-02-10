@@ -763,8 +763,10 @@ public class MediaCodecHelper {
             return false;
         }
 
-        // TODO: Test some AV1 decoders
-        return false;
+        // Hardware-accelerated AV1 decoders are generally well-supported on modern devices
+        // AV1 provides better compression efficiency than HEVC, so prefer it when available
+        LimeLog.info("Whitelisting hardware AV1 decoder: " + decoderInfo.getName());
+        return true;
     }
 
     @SuppressWarnings("deprecation")
