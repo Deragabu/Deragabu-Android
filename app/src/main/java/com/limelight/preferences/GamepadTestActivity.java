@@ -325,6 +325,8 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
     }
 
     private void testVibration(boolean lowFreq, boolean highFreq, boolean leftTrigger, boolean rightTrigger) {
+        boolean gamepadVibrated = false;
+
         for (VibratorInfo vibratorInfo : gamepadVibrators) {
             if (vibratorInfo.hasQuadVibrators && vibratorInfo.vibratorManager != null) {
                 ControllerHandler.rumbleQuadVibrators(vibratorInfo.vibratorManager,
@@ -332,22 +334,25 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
                         highFreq ? (short)32767 : 0,
                         leftTrigger ? (short)32767 : 0,
                         rightTrigger ? (short)32767 : 0);
+                gamepadVibrated = true;
             } else if (vibratorInfo.hasDualVibrators && vibratorInfo.vibratorManager != null) {
                 ControllerHandler.rumbleDualVibrators(vibratorInfo.vibratorManager,
                         lowFreq ? (short)32767 : 0,
                         highFreq ? (short)32767 : 0);
+                gamepadVibrated = true;
             } else if (vibratorInfo.vibrator != null && vibratorInfo.vibrator.hasVibrator()) {
                 // Use waveform to simulate different motor types on single-motor devices
                 // Don't simulate trigger vibration on single-motor devices
                 if (!leftTrigger && !rightTrigger) {
                     vibrateSingleMotorSimulation(vibratorInfo.vibrator, lowFreq, highFreq);
+                    gamepadVibrated = true;
                 }
             }
         }
 
-        // If no gamepad vibrators found, try device vibrator
+        // If no gamepad vibrated, try device vibrator as fallback
         // Don't simulate trigger vibration on single-motor devices
-        if (gamepadVibrators.isEmpty() && !leftTrigger && !rightTrigger) {
+        if (!gamepadVibrated && !leftTrigger && !rightTrigger) {
             Vibrator deviceVibrator = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
             if (deviceVibrator != null && deviceVibrator.hasVibrator() && (lowFreq || highFreq)) {
                 vibrateSingleMotorSimulation(deviceVibrator, lowFreq, highFreq);
