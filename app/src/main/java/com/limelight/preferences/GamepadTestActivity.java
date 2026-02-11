@@ -349,8 +349,9 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
 
     /**
      * Simulates dual-motor vibration on a single-motor device using waveforms.
-     * Low frequency: Long, slow pulses (~100Hz feel) - deep rumble
-     * High frequency: Short, rapid pulses (~200Hz feel) - sharp buzz
+     * Requires amplitude control - devices without it cannot properly simulate dual-motor vibration.
+     * Low frequency: Long, slow pulses - deep rumble
+     * High frequency: Short, rapid pulses - sharp buzz
      * Both: Combined pattern that alternates between both feels
      */
     private void vibrateSingleMotorSimulation(Vibrator vibrator, boolean lowFreq, boolean highFreq) {
@@ -359,119 +360,107 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
             return;
         }
 
+        // Require amplitude control for proper simulation
+        if (!vibrator.hasAmplitudeControl()) {
+            return;
+        }
+
         VibrationEffect effect;
-        boolean hasAmplitudeControl = vibrator.hasAmplitudeControl();
 
         if (lowFreq && highFreq) {
             // Both motors: create a complex waveform that combines both characteristics
             // Alternates between low-freq (strong, slow) and high-freq (lighter, fast) patterns
-            if (hasAmplitudeControl) {
-                long[] timings = {
-                    0,   // delay
-                    80,  // low freq pulse (strong)
-                    20,  // pause
-                    30,  // high freq pulse
-                    10,  // pause
-                    30,  // high freq pulse
-                    10,  // pause
-                    80,  // low freq pulse (strong)
-                    20,  // pause
-                    30,  // high freq pulse
-                    10,  // pause
-                    30,  // high freq pulse
-                    10,  // pause
-                    80,  // low freq pulse
-                    20,  // pause
-                };
-                int[] amplitudes = {
-                    0,    // delay
-                    255,  // low freq - strong
-                    0,    // pause
-                    180,  // high freq
-                    0,    // pause
-                    180,  // high freq
-                    0,    // pause
-                    255,  // low freq - strong
-                    0,    // pause
-                    180,  // high freq
-                    0,    // pause
-                    180,  // high freq
-                    0,    // pause
-                    255,  // low freq
-                    0,    // pause
-                };
-                effect = VibrationEffect.createWaveform(timings, amplitudes, 0); // repeat
-            } else {
-                // No amplitude control: use timing patterns only
-                long[] timings = { 0, 60, 40, 20, 20, 20, 20, 60, 40, 20, 20, 20, 20 };
-                effect = VibrationEffect.createWaveform(timings, 0);
-            }
+            long[] timings = {
+                0,   // delay
+                80,  // low freq pulse (strong)
+                20,  // pause
+                30,  // high freq pulse
+                10,  // pause
+                30,  // high freq pulse
+                10,  // pause
+                80,  // low freq pulse (strong)
+                20,  // pause
+                30,  // high freq pulse
+                10,  // pause
+                30,  // high freq pulse
+                10,  // pause
+                80,  // low freq pulse
+                20,  // pause
+            };
+            int[] amplitudes = {
+                0,    // delay
+                255,  // low freq - strong
+                0,    // pause
+                180,  // high freq
+                0,    // pause
+                180,  // high freq
+                0,    // pause
+                255,  // low freq - strong
+                0,    // pause
+                180,  // high freq
+                0,    // pause
+                180,  // high freq
+                0,    // pause
+                255,  // low freq
+                0,    // pause
+            };
+            effect = VibrationEffect.createWaveform(timings, amplitudes, 0);
         } else if (lowFreq) {
             // Low frequency motor simulation: slow, heavy pulses
             // Creates a deep, throbbing rumble sensation
-            if (hasAmplitudeControl) {
-                long[] timings = {
-                    0,    // delay
-                    100,  // on - long pulse
-                    50,   // off - short pause
-                    100,  // on
-                    50,   // off
-                    100,  // on
-                    50,   // off
-                };
-                int[] amplitudes = {
-                    0,    // delay
-                    255,  // strong
-                    0,    // off
-                    230,  // slightly less
-                    0,    // off
-                    255,  // strong
-                    0,    // off
-                };
-                effect = VibrationEffect.createWaveform(timings, amplitudes, 0);
-            } else {
-                long[] timings = { 0, 100, 50, 100, 50, 100, 50 };
-                effect = VibrationEffect.createWaveform(timings, 0);
-            }
+            long[] timings = {
+                0,    // delay
+                100,  // on - long pulse
+                50,   // off - short pause
+                100,  // on
+                50,   // off
+                100,  // on
+                50,   // off
+            };
+            int[] amplitudes = {
+                0,    // delay
+                255,  // strong
+                0,    // off
+                230,  // slightly less
+                0,    // off
+                255,  // strong
+                0,    // off
+            };
+            effect = VibrationEffect.createWaveform(timings, amplitudes, 0);
         } else {
             // High frequency motor simulation: rapid, short pulses
             // Creates a sharp, buzzing sensation
-            if (hasAmplitudeControl) {
-                long[] timings = {
-                    0,   // delay
-                    25,  // on - short pulse
-                    15,  // off
-                    25,  // on
-                    15,  // off
-                    25,  // on
-                    15,  // off
-                    25,  // on
-                    15,  // off
-                    25,  // on
-                    15,  // off
-                    25,  // on
-                    15,  // off
-                };
-                int[] amplitudes = {
-                    0,    // delay
-                    200,  // medium-high
-                    0,    // off
-                    180,  // slightly less
-                    0,    // off
-                    200,  // medium-high
-                    0,    // off
-                    180,  // slightly less
-                    0,    // off
-                    200,  // medium-high
-                    0,    // off
-                    180,  // slightly less
-                    0,    // off
-                };
-                effect = VibrationEffect.createWaveform(timings, amplitudes, 0);
-            } else {
-                long[] timings = { 0, 25, 15, 25, 15, 25, 15, 25, 15, 25, 15, 25, 15 };
-                effect = VibrationEffect.createWaveform(timings, 0);
-            }
+            long[] timings = {
+                0,   // delay
+                25,  // on - short pulse
+                15,  // off
+                25,  // on
+                15,  // off
+                25,  // on
+                15,  // off
+                25,  // on
+                15,  // off
+                25,  // on
+                15,  // off
+                25,  // on
+                15,  // off
+            };
+            int[] amplitudes = {
+                0,    // delay
+                200,  // medium-high
+                0,    // off
+                180,  // slightly less
+                0,    // off
+                200,  // medium-high
+                0,    // off
+                180,  // slightly less
+                0,    // off
+                200,  // medium-high
+                0,    // off
+                180,  // slightly less
+                0,    // off
+            };
+            effect = VibrationEffect.createWaveform(timings, amplitudes, 0);
         }
 
         vibrator.vibrate(effect);

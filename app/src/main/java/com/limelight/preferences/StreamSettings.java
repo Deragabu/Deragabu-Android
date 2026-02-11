@@ -337,8 +337,11 @@ public class StreamSettings extends AppCompatActivity {
             }
 
             PreferenceCategory category_gamepad_settings = findPreference("category_gamepad_settings");
-            // Remove the vibration options if the device can't vibrate
-            if (!((Vibrator) requireActivity().getSystemService(Context.VIBRATOR_SERVICE)).hasVibrator()) {
+            Vibrator deviceVibrator = (Vibrator) requireActivity().getSystemService(Context.VIBRATOR_SERVICE);
+
+            // Remove the vibration options if the device can't vibrate or doesn't support amplitude control
+            // Amplitude control is required for proper dual-motor rumble simulation
+            if (!deviceVibrator.hasVibrator() || !deviceVibrator.hasAmplitudeControl()) {
                 if (category_gamepad_settings != null) {
                     category_gamepad_settings.removePreference(findPreference("checkbox_vibrate_fallback"));
                     category_gamepad_settings.removePreference(findPreference("seekbar_vibrate_fallback_strength"));
@@ -347,11 +350,6 @@ public class StreamSettings extends AppCompatActivity {
                 PreferenceCategory category = findPreference("category_onscreen_controls");
                 if (category != null) {
                     category.removePreference(findPreference("checkbox_vibrate_osc"));
-                }
-            } else if (!((Vibrator) requireActivity().getSystemService(Context.VIBRATOR_SERVICE)).hasAmplitudeControl()) {
-                // Remove the vibration strength selector of the device doesn't have amplitude control
-                if (category_gamepad_settings != null) {
-                    category_gamepad_settings.removePreference(findPreference("seekbar_vibrate_fallback_strength"));
                 }
             }
 
