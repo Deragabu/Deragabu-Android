@@ -281,9 +281,9 @@ public class PreferenceConfiguration {
             -1,
         };
         int[] factorVals = {
-            10,
-            20,
-            40,
+            14,
+            25,
+            56,
             -1
         };
 
