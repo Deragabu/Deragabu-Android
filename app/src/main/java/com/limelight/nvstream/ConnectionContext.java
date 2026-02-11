@@ -28,6 +28,7 @@ public class ConnectionContext {
 
     public int negotiatedRemoteStreaming;
     public int negotiatedPacketSize;
+    public int negotiatedBitrate;
 
     public int videoCapabilities;
 }

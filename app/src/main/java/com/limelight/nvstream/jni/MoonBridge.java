@@ -22,6 +22,15 @@ public class MoonBridge {
     public static final int VIDEO_FORMAT_MASK_AV1 = 0xF000;
     public static final int VIDEO_FORMAT_MASK_10BIT = 0x2200;
 
+    // Server Codec Mode Support flags (from Limelight.h)
+    public static final int SCM_H264 = 0x00000001;
+    public static final int SCM_HEVC = 0x00000100;
+    public static final int SCM_HEVC_MAIN10 = 0x00000200;
+    public static final int SCM_AV1_MAIN8 = 0x00010000;
+    public static final int SCM_AV1_MAIN10 = 0x00020000;
+    public static final int SCM_MASK_AV1 = SCM_AV1_MAIN8 | SCM_AV1_MAIN10;
+    public static final int SCM_MASK_HEVC = SCM_HEVC | SCM_HEVC_MAIN10;
+
     public static final int BUFFER_TYPE_PICDATA = 0;
     public static final int BUFFER_TYPE_SPS = 1;
     public static final int BUFFER_TYPE_PPS = 2;
@@ -186,6 +195,39 @@ public class MoonBridge {
         public int toInt() {
             return ((channelMask) << 16) | (channelCount << 8) | 0xCA;
         }
+    }
+
+    /**
+     * Predicts the negotiated video format based on server and client capabilities.
+     * The server will choose the best codec that both sides support, with priority: AV1 > HEVC > H264
+     *
+     * @param serverCodecModeSupport Server's codec mode support flags (SCM_* values)
+     * @param clientSupportedVideoFormats Client's supported video formats (VIDEO_FORMAT_* values)
+     * @return The predicted video format that will be negotiated
+     */
+    public static int predictNegotiatedVideoFormat(int serverCodecModeSupport, int clientSupportedVideoFormats) {
+        // Check AV1 support (highest priority)
+        if ((serverCodecModeSupport & SCM_AV1_MAIN10) != 0 &&
+            (clientSupportedVideoFormats & VIDEO_FORMAT_AV1_MAIN10) != 0) {
+            return VIDEO_FORMAT_AV1_MAIN10;
+        }
+        if ((serverCodecModeSupport & SCM_AV1_MAIN8) != 0 &&
+            (clientSupportedVideoFormats & VIDEO_FORMAT_AV1_MAIN8) != 0) {
+            return VIDEO_FORMAT_AV1_MAIN8;
+        }
+
+        // Check HEVC support (second priority)
+        if ((serverCodecModeSupport & SCM_HEVC_MAIN10) != 0 &&
+            (clientSupportedVideoFormats & VIDEO_FORMAT_H265_MAIN10) != 0) {
+            return VIDEO_FORMAT_H265_MAIN10;
+        }
+        if ((serverCodecModeSupport & SCM_HEVC) != 0 &&
+            (clientSupportedVideoFormats & VIDEO_FORMAT_H265) != 0) {
+            return VIDEO_FORMAT_H265;
+        }
+
+        // Fallback to H264
+        return VIDEO_FORMAT_H264;
     }
 
     public static int bridgeDrSetup(int videoFormat, int width, int height, int redrawRate) {

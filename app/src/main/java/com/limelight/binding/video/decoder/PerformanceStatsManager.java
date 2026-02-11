@@ -32,6 +32,7 @@ public class PerformanceStatsManager {
     private int lastFrameNumber;
     private int initialWidth;
     private int initialHeight;
+    private int negotiatedBitrate;
 
     public PerformanceStatsManager(Context context, PreferenceConfiguration prefs,
                                     PerfOverlayListener perfListener) {
@@ -47,6 +48,10 @@ public class PerformanceStatsManager {
     public void setVideoDimensions(int width, int height) {
         this.initialWidth = width;
         this.initialHeight = height;
+    }
+
+    public void setNegotiatedBitrate(int bitrateKbps) {
+        this.negotiatedBitrate = bitrateKbps;
     }
 
     public VideoStats getActiveWindowVideoStats() {
@@ -130,6 +135,7 @@ public class PerformanceStatsManager {
                 .setResolution(initialWidth, initialHeight)
                 .setFps(lastTwo.getFps())
                 .setDecoderName(activeDecoderName)
+                .setBitrate(negotiatedBitrate)
                 .setNetworkStats(lastTwo.totalFrames, lastTwo.framesLost, rttInfo)
                 .setHostProcessingLatency(
                         lastTwo.minHostProcessingLatency,

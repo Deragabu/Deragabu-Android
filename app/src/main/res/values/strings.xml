@@ -120,6 +120,8 @@
     <string name="slow_connection_msg">Slow connection to PC\nReduce your bitrate</string>
     <string name="poor_connection_msg">Poor connection to PC</string>
     <string name="perf_overlay_streamdetails">Video stream: %1$s %2$.2f FPS</string>
+    <string name="perf_overlay_bitrate">Bitrate: %1$.1f Mbps</string>
+    <string name="perf_overlay_bitrate_auto">Bitrate: %1$.1f Mbps (Auto)</string>
     <string name="perf_overlay_decoder">Decoder: %1$s</string>
     <string name="perf_overlay_incomingfps">Incoming frame rate from network: %1$.2f FPS</string>
     <string name="perf_overlay_renderingfps">Rendering frame rate: %1$.2f FPS</string>
@@ -168,6 +170,8 @@
     <string name="title_seekbar_bitrate">Video bitrate</string>
     <string name="summary_seekbar_bitrate">Increase for better image quality. Decrease to improve performance on slower connections.</string>
     <string name="suffix_seekbar_bitrate_mbps">Mbps</string>
+    <string name="title_checkbox_auto_bitrate">Automatic bitrate</string>
+    <string name="summary_checkbox_auto_bitrate">Automatically select optimal bitrate based on resolution, frame rate, and video codec</string>
     <string name="title_checkbox_stretch_video">Stretch video to full-screen</string>
     <string name="resolution_prefix_native">Native</string>
     <string name="resolution_prefix_native_fullscreen">Native Full-Screen</string>

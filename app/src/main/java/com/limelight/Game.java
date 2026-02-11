@@ -88,7 +88,7 @@ import java.security.cert.X509Certificate;
 import java.util.Locale;
 
 
-@SuppressWarnings({ "NullableProblems", "DataFlowIssue", "WriteOnlyObject"})
+@SuppressWarnings({"NullableProblems", "DataFlowIssue", "WriteOnlyObject"})
 public class Game extends Activity implements SurfaceHolder.Callback,
         OnGenericMotionListener, OnTouchListener, NvConnectionListener,
         GameGestures, StreamView.InputCallbacks,
@@ -742,7 +742,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }
         } catch (ClassNotFoundException | NoSuchMethodException | InvocationTargetException |
                  IllegalAccessException e) {
-            Log.e(TAG, "setMetaKeyCaptureState: "+e.getMessage(), e);
+            Log.e(TAG, "setMetaKeyCaptureState: " + e.getMessage(), e);
         }
     }
 
@@ -818,8 +818,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
      * Calculate a score for a display mode based on how well it matches the streaming requirements.
      * Higher scores are better.
      *
-     * @param mode The display mode to evaluate
-     * @param currentMode The current display mode (used for preference when scores are equal)
+     * @param mode                     The display mode to evaluate
+     * @param currentMode              The current display mode (used for preference when scores are equal)
      * @param isNativeResolutionStream Whether the stream uses native resolution
      * @return A score indicating how suitable this mode is (higher is better)
      */
@@ -881,13 +881,13 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             // Penalize unnecessarily high refresh rates
             if (refreshRate > prefConfig.fps + 5) {
                 float excessRatio = refreshRate / prefConfig.fps;
-                score -= (int)(excessRatio * 10);
+                score -= (int) (excessRatio * 10);
             }
         } else {
             // User prefers higher refresh rate for smoothness
             // Bonus for higher refresh rates (diminishing returns)
             if (refreshRate > prefConfig.fps) {
-                score += Math.min(30, (int)((refreshRate - prefConfig.fps) / 2));
+                score += Math.min(30, (int) ((refreshRate - prefConfig.fps) / 2));
             }
         }
 
@@ -1743,11 +1743,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         conn.sendKeyboardInput(ctrlKeyCode, KeyboardPacket.KEY_DOWN, (byte) 0, (byte) 0);
         conn.sendKeyboardInput(shiftKeyCode, KeyboardPacket.KEY_DOWN, KeyboardPacket.MODIFIER_CTRL, (byte) 0);
         conn.sendKeyboardInput(escKeyCode, KeyboardPacket.KEY_DOWN,
-            (byte)(KeyboardPacket.MODIFIER_CTRL | KeyboardPacket.MODIFIER_SHIFT), (byte) 0);
+                (byte) (KeyboardPacket.MODIFIER_CTRL | KeyboardPacket.MODIFIER_SHIFT), (byte) 0);
 
         // Release in reverse sequence
         conn.sendKeyboardInput(escKeyCode, KeyboardPacket.KEY_UP,
-            (byte)(KeyboardPacket.MODIFIER_CTRL | KeyboardPacket.MODIFIER_SHIFT), (byte) 0);
+                (byte) (KeyboardPacket.MODIFIER_CTRL | KeyboardPacket.MODIFIER_SHIFT), (byte) 0);
         conn.sendKeyboardInput(shiftKeyCode, KeyboardPacket.KEY_UP, KeyboardPacket.MODIFIER_CTRL, (byte) 0);
         conn.sendKeyboardInput(ctrlKeyCode, KeyboardPacket.KEY_UP, (byte) 0, (byte) 0);
     }
@@ -2032,7 +2032,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // Handle multi-finger gestures early, before any other processing
         // This ensures gesture detection works regardless of event source classification
         if (prefConfig.touchscreenTrackpad &&
-            event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) {
+                event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) {
             int actionMasked = event.getActionMasked();
             int pointerCount = event.getPointerCount();
 
@@ -2296,8 +2296,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                 // Cancel touches when 3+ fingers are detected (multi-finger gestures are handled at the start of handleMotionEvent)
                 if (prefConfig.touchscreenTrackpad &&
-                    event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN &&
-                    event.getPointerCount() >= 3) {
+                        event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN &&
+                        event.getPointerCount() >= 3) {
                     cancelAllTouches();
                     return true;
                 }
@@ -2647,6 +2647,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public void connectionStarted() {
+        // Set the negotiated bitrate for performance stats display
+        decoderRenderer.setNegotiatedBitrate(conn.getNegotiatedBitrate());
+
         runOnUiThread(() -> {
             if (spinner != null) {
                 spinner.dismiss();
@@ -2663,12 +2666,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             // is too early to capture. We will delay a second to allow
             // the spinner to dismiss before capturing.
             Handler h = new Handler();
-            h.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    setInputGrabState(true);
-                }
-            }, 500);
+            h.postDelayed(() -> setInputGrabState(true), 500);
 
             // Keep the display on
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -2791,7 +2789,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }
         }
     }
-
 
 
     @Override

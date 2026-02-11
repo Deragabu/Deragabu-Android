@@ -91,6 +91,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         this.renderTarget = renderTarget;
     }
 
+    public void setNegotiatedBitrate(int bitrateKbps) {
+        statsManager.setNegotiatedBitrate(bitrateKbps);
+    }
+
     public MediaCodecDecoderRenderer(Activity activity, PreferenceConfiguration prefs,
                                      CrashListener crashListener, int consecutiveCrashCount,
                                      boolean requestedHdr,
@@ -921,6 +925,7 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         activeStats.totalFramesReceived++;
         activeStats.totalFrames++;
+        activeStats.totalBytesReceived += decodeUnitLength;
 
         if (!FRAME_RENDER_TIME_ONLY) {
             // Count time from first packet received to enqueue time as receive time

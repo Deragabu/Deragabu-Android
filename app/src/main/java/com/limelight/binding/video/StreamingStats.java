@@ -15,6 +15,8 @@ public class StreamingStats {
     public final String resolution;
     public final float totalFps;
     public final String decoderName;
+    public final int bitrateKbps;  // Configured bitrate in kbps
+    public final boolean autoBitrate;  // Whether auto bitrate is enabled
 
     // Frame rates
     public final float receivedFps;
@@ -39,6 +41,7 @@ public class StreamingStats {
     public final int gamepadVibrationCount;
 
     public StreamingStats(String resolution, float totalFps, String decoderName,
+                          int bitrateKbps, boolean autoBitrate,
                           float receivedFps, float renderedFps,
                           float networkDropPercentage, int networkLatencyMs, int networkLatencyVarianceMs,
                           float minHostLatencyMs, float maxHostLatencyMs, float avgHostLatencyMs, boolean hasHostLatency,
@@ -46,6 +49,8 @@ public class StreamingStats {
         this.resolution = resolution;
         this.totalFps = totalFps;
         this.decoderName = decoderName;
+        this.bitrateKbps = bitrateKbps;
+        this.autoBitrate = autoBitrate;
         this.receivedFps = receivedFps;
         this.renderedFps = renderedFps;
         this.networkDropPercentage = networkDropPercentage;
@@ -62,7 +67,7 @@ public class StreamingStats {
 
     /**
      * Get a simplified one-line summary for notification display.
-     * Format: "DecoderName | 1920x1080 60.0 FPS | RTT 5 ms | Dec 2.5 ms | 🎮 2(1)"
+     * Format: "DecoderName | 1920x1080 60.0 FPS | 20 Mbps (Auto) | RTT 5 ms | Dec 2.5 ms | 🎮 2(1)"
      */
     @SuppressLint("DefaultLocale")
     public String toNotificationText(String videoCodec) {
@@ -75,6 +80,13 @@ public class StreamingStats {
 
         // Resolution and FPS
         sb.append(resolution).append(" ").append(String.format("%.1f", totalFps)).append(" FPS");
+
+        // Bitrate (show in Mbps with auto indicator)
+        float bitrateMbps = bitrateKbps / 1000.0f;
+        sb.append(" | ").append(String.format("%.1f", bitrateMbps)).append(" Mbps");
+        if (autoBitrate) {
+            sb.append(" (Auto)");
+        }
 
         // Network latency
         sb.append(" | RTT ").append(networkLatencyMs).append(" ms");
@@ -101,6 +113,15 @@ public class StreamingStats {
 
         sb.append(context.getString(R.string.perf_overlay_streamdetails,
                 resolution, totalFps)).append('\n');
+
+        // Show bitrate with auto indicator
+        float bitrateMbps = bitrateKbps / 1000.0f;
+        if (autoBitrate) {
+            sb.append(context.getString(R.string.perf_overlay_bitrate_auto, bitrateMbps)).append('\n');
+        } else {
+            sb.append(context.getString(R.string.perf_overlay_bitrate, bitrateMbps)).append('\n');
+        }
+
         sb.append(context.getString(R.string.perf_overlay_decoder, decoderName)).append('\n');
         sb.append(context.getString(R.string.perf_overlay_incomingfps, receivedFps)).append('\n');
         sb.append(context.getString(R.string.perf_overlay_renderingfps, renderedFps)).append('\n');
@@ -124,6 +145,8 @@ public class StreamingStats {
         private String resolution = "";
         private float totalFps;
         private String decoderName = "";
+        private int bitrateKbps;
+        private boolean autoBitrate;
         private float receivedFps;
         private float renderedFps;
         private float networkDropPercentage;
@@ -151,6 +174,12 @@ public class StreamingStats {
 
         public Builder setDecoderName(String decoderName) {
             this.decoderName = decoderName;
+            return this;
+        }
+
+        public Builder setBitrate(int bitrateKbps) {
+            this.bitrateKbps = bitrateKbps;
+            this.autoBitrate = false;
             return this;
         }
 
@@ -190,6 +219,7 @@ public class StreamingStats {
         public StreamingStats build() {
             return new StreamingStats(
                     resolution, totalFps, decoderName,
+                    bitrateKbps, autoBitrate,
                     receivedFps, renderedFps,
                     networkDropPercentage, networkLatencyMs, networkLatencyVarianceMs,
                     minHostLatencyMs, maxHostLatencyMs, avgHostLatencyMs, hasHostLatency,

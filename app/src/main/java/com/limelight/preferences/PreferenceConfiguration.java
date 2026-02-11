@@ -29,12 +29,12 @@ public class PreferenceConfiguration {
     static final String FPS_PREF_STRING = "list_fps";
     static final String BITRATE_PREF_STRING = "seekbar_bitrate_kbps";
     private static final String BITRATE_PREF_OLD_STRING = "seekbar_bitrate";
+    private static final String AUTO_BITRATE_PREF_STRING = "checkbox_auto_bitrate";
     private static final String STRETCH_PREF_STRING = "checkbox_stretch_video";
     private static final String SOPS_PREF_STRING = "checkbox_enable_sops";
     private static final String DISABLE_TOASTS_PREF_STRING = "checkbox_disable_warnings";
     private static final String HOST_AUDIO_PREF_STRING = "checkbox_host_audio";
     private static final String DEADZONE_PREF_STRING = "seekbar_deadzone";
-    private static final String OSC_OPACITY_PREF_STRING = "seekbar_osc_opacity";
     private static final String LANGUAGE_PREF_STRING = "list_languages";
     private static final String SMALL_ICONS_PREF_STRING = "checkbox_small_icon_mode";
     private static final String MULTI_CONTROLLER_PREF_STRING = "checkbox_multi_controller";
@@ -82,6 +82,7 @@ public class PreferenceConfiguration {
     private static final boolean DEFAULT_ENABLE_PIP = false;
     private static final boolean DEFAULT_ENABLE_PERF_OVERLAY = false;
     private static final boolean DEFAULT_ENABLE_STATS_NOTIFICATION = true;
+    private static final boolean DEFAULT_AUTO_BITRATE = true;
     private static final boolean DEFAULT_BIND_ALL_USB = true;
     private static final boolean DEFAULT_MOUSE_EMULATION = true;
     private static final String DEFAULT_ANALOG_STICK_FOR_SCROLLING = "right";
@@ -115,6 +116,7 @@ public class PreferenceConfiguration {
 
     public int width, height, fps;
     public int bitrate;
+    public boolean autoBitrate;
     public FormatOption videoFormat;
     public int deadzonePercentage;
     public boolean stretchVideo, enableSops, playHostAudio, disableWarnings;
@@ -342,6 +344,17 @@ public class PreferenceConfiguration {
         return context.getResources().getConfiguration().smallestScreenWidthDp < 500;
     }
 
+    /**
+     * Check if auto bitrate is enabled.
+     *
+     * @param context Application context
+     * @return true if auto bitrate is enabled
+     */
+    public static boolean isAutoBitrateEnabled(Context context) {
+        SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(context);
+        return prefs.getBoolean(AUTO_BITRATE_PREF_STRING, DEFAULT_AUTO_BITRATE);
+    }
+
     @SuppressWarnings("deprecation")
     public static int getDefaultBitrate(Context context) {
         SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(context);
@@ -350,6 +363,35 @@ public class PreferenceConfiguration {
                 prefs.getString(FPS_PREF_STRING, DEFAULT_FPS),
                 getVideoFormatValue(context));
     }
+
+    /**
+     * Calculate default bitrate based on actual negotiated video format from host.
+     * This should be called after connection is established and we know the actual codec.
+     *
+     * @param context Application context
+     * @param actualVideoFormat The video format returned from MoonBridge (e.g., VIDEO_FORMAT_H265, VIDEO_FORMAT_AV1_MAIN8)
+     * @return The calculated bitrate in kbps
+     */
+    @SuppressWarnings("deprecation")
+    public static int getDefaultBitrateForVideoFormat(Context context, int actualVideoFormat) {
+        SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(context);
+        String resString = prefs.getString(RESOLUTION_PREF_STRING, DEFAULT_RESOLUTION);
+        String fpsString = prefs.getString(FPS_PREF_STRING, DEFAULT_FPS);
+
+        // Convert MoonBridge video format to FormatOption
+        FormatOption formatOption;
+        if ((actualVideoFormat & MoonBridge.VIDEO_FORMAT_MASK_AV1) != 0) {
+            formatOption = FormatOption.FORCE_AV1;
+        } else if ((actualVideoFormat & MoonBridge.VIDEO_FORMAT_MASK_H265) != 0) {
+            formatOption = FormatOption.FORCE_HEVC;
+        } else {
+            // H.264 or unknown - use base bitrate (AUTO will detect device capability)
+            formatOption = FormatOption.AUTO;
+        }
+
+        return getDefaultBitrate(resString, fpsString, formatOption);
+    }
+
 
     @SuppressWarnings("deprecation")
     private static FormatOption getVideoFormatValue(Context context) {
@@ -527,10 +569,18 @@ public class PreferenceConfiguration {
 
         prefs.contains(GAMEPAD_MOTION_SENSORS_PREF_STRING);
 
+        // Read auto bitrate preference
+        config.autoBitrate = prefs.getBoolean(AUTO_BITRATE_PREF_STRING, DEFAULT_AUTO_BITRATE);
+
         // This must happen after the preferences migration to ensure the preferences are populated
-        config.bitrate = prefs.getInt(BITRATE_PREF_STRING, prefs.getInt(BITRATE_PREF_OLD_STRING, 0) * 1000);
-        if (config.bitrate == 0) {
+        if (config.autoBitrate) {
+            // When auto bitrate is enabled, always calculate the optimal bitrate
             config.bitrate = getDefaultBitrate(context);
+        } else {
+            config.bitrate = prefs.getInt(BITRATE_PREF_STRING, prefs.getInt(BITRATE_PREF_OLD_STRING, 0) * 1000);
+            if (config.bitrate == 0) {
+                config.bitrate = getDefaultBitrate(context);
+            }
         }
 
         String audioConfig = prefs.getString(AUDIO_CONFIG_PREF_STRING, DEFAULT_AUDIO_CONFIG);

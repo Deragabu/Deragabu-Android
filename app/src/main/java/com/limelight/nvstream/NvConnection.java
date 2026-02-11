@@ -86,6 +86,10 @@ public class NvConnection {
         return new SecureRandom().nextInt();
     }
 
+    public int getNegotiatedBitrate() {
+        return context.negotiatedBitrate;
+    }
+
     public void stop() {
         // Interrupt any pending connection. This is thread-safe.
         MoonBridge.interruptConnection();
@@ -283,7 +287,23 @@ public class NvConnection {
             context.negotiatedRemoteStreaming = context.streamConfig.getRemote();
             context.negotiatedPacketSize = context.streamConfig.getMaxPacketSize();
         }
-        
+
+        // Negotiate bitrate based on predicted video format
+        // When auto bitrate is enabled, we calculate the optimal bitrate based on
+        // the codec that will likely be negotiated between server and client
+        if (com.limelight.preferences.PreferenceConfiguration.isAutoBitrateEnabled(appContext)) {
+            int predictedVideoFormat = MoonBridge.predictNegotiatedVideoFormat(
+                    context.serverCodecModeSupport,
+                    context.streamConfig.getSupportedVideoFormats());
+            context.negotiatedBitrate = com.limelight.preferences.PreferenceConfiguration
+                    .getDefaultBitrateForVideoFormat(appContext, predictedVideoFormat);
+            LimeLog.info("Predicted video format: 0x" + Integer.toHexString(predictedVideoFormat) +
+                    ", negotiated bitrate: " + context.negotiatedBitrate + " kbps");
+        } else {
+            // Use the user-configured bitrate
+            context.negotiatedBitrate = context.streamConfig.getBitrate();
+        }
+
         //
         // Video stream format will be decided during the RTSP handshake
         //
@@ -422,7 +442,7 @@ public class NvConnection {
                             context.serverAppVersion, context.serverGfeVersion, context.rtspSessionUrl,
                             context.serverCodecModeSupport,
                             context.negotiatedWidth, context.negotiatedHeight,
-                            context.streamConfig.getRefreshRate(), context.streamConfig.getBitrate(),
+                            context.streamConfig.getRefreshRate(), context.negotiatedBitrate,
                             context.negotiatedPacketSize, context.negotiatedRemoteStreaming,
                             context.streamConfig.getAudioConfiguration().toInt(),
                             context.streamConfig.getSupportedVideoFormats(),

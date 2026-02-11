@@ -98,14 +98,15 @@ public class StreamSettings extends AppCompatActivity {
         }
     }
 
-    @Override
+/*    @Override
     // NOTE: This will NOT be called on Android 13+ with android:enableOnBackInvokedCallback="true"
     public void onBackPressed() {
+        super.onBackPressed();
         finish();
 
         // Language changes are handled via configuration changes in Android 13+,
         // so manual activity relaunching is no longer required.
-    }
+    }*/
 
     public static class SettingsFragment extends PreferenceFragmentCompat {
         private int nativeResolutionStartIndex = Integer.MAX_VALUE;
@@ -241,7 +242,7 @@ public class StreamSettings extends AppCompatActivity {
             pref.setEntryValues(entryValues);
         }
 
-        private void resetBitrateToDefault(SharedPreferences prefs, String res, String fps) {
+        /*private void resetBitrateToDefault(SharedPreferences prefs, String res, String fps) {
             if (res == null) {
                 res = prefs.getString(PreferenceConfiguration.RESOLUTION_PREF_STRING, PreferenceConfiguration.DEFAULT_RESOLUTION);
             }
@@ -275,7 +276,7 @@ public class StreamSettings extends AppCompatActivity {
             if (bitratePref != null) {
                 bitratePref.setValue(newBitrate);
             }
-        }
+        }*/
 
         @Override
         public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
@@ -471,45 +472,34 @@ public class StreamSettings extends AppCompatActivity {
                 if (maxSupportedResW < 3840) {
                     // 4K is unsupported
                     removeValue(PreferenceConfiguration.RESOLUTION_PREF_STRING, PreferenceConfiguration.RES_4K, () -> {
-                        SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(requireActivity());
                         setValue(PreferenceConfiguration.RESOLUTION_PREF_STRING, PreferenceConfiguration.RES_1440P);
-                        resetBitrateToDefault(prefs, null, null);
                     });
                 }
                 if (maxSupportedResW < 2560) {
                     // 1440p is unsupported
                     removeValue(PreferenceConfiguration.RESOLUTION_PREF_STRING, PreferenceConfiguration.RES_1440P, () -> {
-                        SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(requireActivity());
                         setValue(PreferenceConfiguration.RESOLUTION_PREF_STRING, PreferenceConfiguration.RES_1080P);
-                        resetBitrateToDefault(prefs, null, null);
                     });
                 }
                 if (maxSupportedResW < 1920) {
                     // 1080p is unsupported
                     removeValue(PreferenceConfiguration.RESOLUTION_PREF_STRING, PreferenceConfiguration.RES_1080P, () -> {
-                        SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(requireActivity());
                         setValue(PreferenceConfiguration.RESOLUTION_PREF_STRING, PreferenceConfiguration.RES_1080P);
-                        resetBitrateToDefault(prefs, null, null);
                     });
                 }
-                // Never remove 720p
             }
 
             if (!PreferenceConfiguration.readPreferences(requireActivity()).unlockFps) {
                 // We give some extra room in case the FPS is rounded down
                 if (maxSupportedFps < 118) {
                     removeValue(PreferenceConfiguration.FPS_PREF_STRING, "120", () -> {
-                        SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(requireActivity());
                         setValue(PreferenceConfiguration.FPS_PREF_STRING, "90");
-                        resetBitrateToDefault(prefs, null, null);
                     });
                 }
                 if (maxSupportedFps < 88) {
                     // 90fps is unsupported
                     removeValue(PreferenceConfiguration.FPS_PREF_STRING, "90", () -> {
-                        SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(requireActivity());
                         setValue(PreferenceConfiguration.FPS_PREF_STRING, "60");
-                        resetBitrateToDefault(prefs, null, null);
                     });
                 }
                 // Never remove 30 FPS or 60 FPS
@@ -591,12 +581,26 @@ public class StreamSettings extends AppCompatActivity {
                 }
             }
 
+            // Handle auto bitrate checkbox - disable manual bitrate seekbar when auto is enabled
+            CheckBoxPreference autoBitratePref = findPreference("checkbox_auto_bitrate");
+            SeekBarPreference bitratePref = findPreference(PreferenceConfiguration.BITRATE_PREF_STRING);
+            if (autoBitratePref != null && bitratePref != null) {
+                // Set initial state - disable seekbar when auto bitrate is enabled
+                boolean autoBitrateEnabled = autoBitratePref.isChecked();
+                bitratePref.setEnabled(!autoBitrateEnabled);
+
+                autoBitratePref.setOnPreferenceChangeListener((preference, newValue) -> {
+                    boolean autoEnabled = (Boolean) newValue;
+                    bitratePref.setEnabled(!autoEnabled);
+                    return true;
+                });
+            }
+
             // Add a listener to the FPS and resolution preference
-            // so the bitrate can be auto-adjusted
+            // so the bitrate can be auto-adjusted when auto bitrate is enabled
             Preference resPref = findPreference(PreferenceConfiguration.RESOLUTION_PREF_STRING);
             if (resPref != null) {
                 resPref.setOnPreferenceChangeListener((preference, newValue) -> {
-                    SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(requireActivity());
                     String valueStr = (String) newValue;
 
                     // Detect if this value is the native resolution option
@@ -618,8 +622,6 @@ public class StreamSettings extends AppCompatActivity {
                                 false);
                     }
 
-                    // Write the new bitrate value
-                    resetBitrateToDefault(prefs, valueStr, null);
 
                     // Allow the original preference change to take place
                     return true;
@@ -629,9 +631,6 @@ public class StreamSettings extends AppCompatActivity {
             Preference fpsPref = findPreference(PreferenceConfiguration.FPS_PREF_STRING);
             if (fpsPref != null) {
                 fpsPref.setOnPreferenceChangeListener((preference, newValue) -> {
-                    SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(requireActivity());
-                    String valueStr = (String) newValue;
-
                     // If this is native frame rate, show the warning dialog
                     CharSequence[] values = ((ListPreference) preference).getEntryValues();
                     if (nativeFramerateShown && values[values.length - 1].toString().equals(newValue.toString())) {
@@ -641,27 +640,11 @@ public class StreamSettings extends AppCompatActivity {
                                 false);
                     }
 
-                    // Write the new bitrate value
-                    resetBitrateToDefault(prefs, null, valueStr);
-
                     // Allow the original preference change to take place
                     return true;
                 });
             }
 
-            // Add a listener to the video format preference to auto-adjust bitrate when codec changes
-            Preference videoFormatPref = findPreference("video_format");
-            if (videoFormatPref != null) {
-                videoFormatPref.setOnPreferenceChangeListener((preference, newValue) -> {
-                    SharedPreferences prefs = MMKVPreferenceManager.getDefaultSharedPreferences(requireActivity());
-
-                    // Write the new bitrate value based on the new codec
-                    resetBitrateToDefault(prefs, null, null);
-
-                    // Allow the original preference change to take place
-                    return true;
-                });
-            }
         }
     }
 }

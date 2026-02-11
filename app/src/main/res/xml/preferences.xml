@@ -18,6 +18,11 @@
             android:entries="@array/fps_names"
             android:entryValues="@array/fps_values"
             android:defaultValue="60" />
+        <CheckBoxPreference
+            android:key="checkbox_auto_bitrate"
+            android:title="@string/title_checkbox_auto_bitrate"
+            android:summary="@string/summary_checkbox_auto_bitrate"
+            android:defaultValue="true" />
         <com.limelight.preferences.SeekBarPreference
             android:key="seekbar_bitrate_kbps"
             android:dialogMessage="@string/summary_seekbar_bitrate"
