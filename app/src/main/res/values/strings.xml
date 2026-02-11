@@ -352,6 +352,44 @@
     <string name="key_hide">Hide</string>
     <string name="key_task_mgr">TaskMgr</string>
 
+    <!-- Gamepad Test -->
+    <string name="gamepad_test_title">Gamepad Test</string>
+    <string name="gamepad_test_no_gamepad">No gamepad detected. Connect a gamepad and tap Refresh.</string>
+    <string name="gamepad_test_found">Found %1$d gamepad(s)</string>
+    <string name="gamepad_test_refresh">Refresh</string>
+    <string name="gamepad_test_vibration_section">Vibration Test</string>
+    <string name="gamepad_test_vibrate_low">Low Freq</string>
+    <string name="gamepad_test_vibrate_high">High Freq</string>
+    <string name="gamepad_test_vibrate_both">Both</string>
+    <string name="gamepad_test_vibrate_stop">Stop</string>
+    <string name="gamepad_test_vibrate_trigger_left">Left Trigger</string>
+    <string name="gamepad_test_vibrate_trigger_right">Right Trigger</string>
+    <string name="gamepad_test_controller_type">Type: %1$s</string>
+    <string name="gamepad_test_protocol_label">Protocol: %1$s</string>
+    <string name="gamepad_test_vendor_product">Vendor: %1$s / Product: %2$s</string>
+    <string name="gamepad_test_capabilities">Capabilities: %1$s</string>
+    <string name="gamepad_test_vibration_label">Vibration: %1$s</string>
+    <string name="gamepad_test_type_xbox">Xbox</string>
+    <string name="gamepad_test_type_playstation">PlayStation</string>
+    <string name="gamepad_test_type_nintendo">Nintendo</string>
+    <string name="gamepad_test_type_unknown">Unknown</string>
+    <string name="gamepad_test_protocol_xinput">XInput</string>
+    <string name="gamepad_test_protocol_hid">HID</string>
+    <string name="gamepad_test_protocol_usb_driver">USB Driver (XInput-like)</string>
+    <string name="gamepad_test_protocol_generic">Generic</string>
+    <string name="gamepad_test_cap_motion">Motion Sensors</string>
+    <string name="gamepad_test_cap_touchpad">Touchpad</string>
+    <string name="gamepad_test_cap_paddles">Paddles</string>
+    <string name="gamepad_test_cap_share">Share Button</string>
+    <string name="gamepad_test_cap_none">None</string>
+    <string name="gamepad_test_vibration_yes">Supported</string>
+    <string name="gamepad_test_vibration_no">Not Supported</string>
+    <string name="gamepad_test_vibration_dual">Dual Motor</string>
+    <string name="gamepad_test_vibration_quad">Quad Motor/Trigger</string>
+    <string name="gamepad_test_vibration_amplitude">Amplitude Control</string>
+    <string name="title_gamepad_test">Gamepad test</string>
+    <string name="summary_gamepad_test">Test connected gamepads and vibration</string>
+
     <!-- Back menu -->
     <string name="back_menu_title">Menu</string>
     <string name="back_menu_disconnect">Disconnect</string>

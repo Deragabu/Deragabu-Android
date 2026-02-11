@@ -355,6 +355,16 @@ public class StreamSettings extends AppCompatActivity {
                 }
             }
 
+            // Setup gamepad test preference click listener
+            Preference gamepadTestPref = findPreference("pref_gamepad_test");
+            if (gamepadTestPref != null) {
+                gamepadTestPref.setOnPreferenceClickListener(preference -> {
+                    android.content.Intent intent = new android.content.Intent(requireActivity(), GamepadTestActivity.class);
+                    startActivity(intent);
+                    return true;
+                });
+            }
+
             Display display = requireActivity().getDisplay();
             float maxSupportedFps = display.getRefreshRate();
 
