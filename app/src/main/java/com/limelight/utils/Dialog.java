@@ -49,12 +49,9 @@ public class Dialog implements Runnable {
 
     public static void displayDialog(final Activity activity, String title, String message, final boolean endAfterDismiss)
     {
-        activity.runOnUiThread(new Dialog(activity, title, message, new Runnable() {
-            @Override
-            public void run() {
-                if (endAfterDismiss) {
-                    activity.finish();
-                }
+        activity.runOnUiThread(new Dialog(activity, title, message, () -> {
+            if (endAfterDismiss) {
+                activity.finish();
             }
         }));
     }
@@ -100,35 +97,30 @@ public class Dialog implements Runnable {
                     }
                 });
 
-                alert.setButton(AlertDialog.BUTTON_NEUTRAL, activity.getResources().getText(R.string.help), new DialogInterface.OnClickListener() {
-                    public void onClick(DialogInterface dialog, int which) {
-                        synchronized (rundownDialogs) {
-                            dialog.dismiss();
-                        }
-                        if (runOnDismiss != null) {
-                            runOnDismiss.run();
-                        }
-                        HelpLauncher.launchTroubleshooting(activity);
+                alert.setButton(AlertDialog.BUTTON_NEUTRAL, activity.getResources().getText(R.string.help), (dialog, which) -> {
+                    synchronized (rundownDialogs) {
+                        dialog.dismiss();
                     }
+                    if (runOnDismiss != null) {
+                        runOnDismiss.run();
+                    }
+                    HelpLauncher.launchTroubleshooting(activity);
                 });
 
-                alert.setOnShowListener(new DialogInterface.OnShowListener() {
-                    @Override
-                    public void onShow(DialogInterface dialog) {
-                        // Prevent the copy button from dismissing the dialog
-                        Button copyButton = alert.getButton(AlertDialog.BUTTON_NEGATIVE);
-                        copyButton.setOnClickListener(v -> {
-                            ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
-                            ClipData clip = ClipData.newPlainText("PIN", pin);
-                            clipboard.setPrimaryClip(clip);
-                            Toast.makeText(activity, R.string.pair_pin_copied, Toast.LENGTH_SHORT).show();
-                        });
+                alert.setOnShowListener(dialog -> {
+                    // Prevent the copy button from dismissing the dialog
+                    Button copyButton = alert.getButton(AlertDialog.BUTTON_NEGATIVE);
+                    copyButton.setOnClickListener(v -> {
+                        ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
+                        ClipData clip = ClipData.newPlainText("PIN", pin);
+                        clipboard.setPrimaryClip(clip);
+                        Toast.makeText(activity, R.string.pair_pin_copied, Toast.LENGTH_SHORT).show();
+                    });
 
-                        Button button = alert.getButton(AlertDialog.BUTTON_POSITIVE);
-                        button.setFocusable(true);
-                        button.setFocusableInTouchMode(true);
-                        button.requestFocus();
-                    }
+                    Button button = alert.getButton(AlertDialog.BUTTON_POSITIVE);
+                    button.setFocusable(true);
+                    button.setFocusableInTouchMode(true);
+                    button.requestFocus();
                 });
 
                 synchronized (rundownDialogs) {
@@ -218,38 +210,20 @@ public class Dialog implements Runnable {
         alert.setCancelable(false);
         alert.setCanceledOnTouchOutside(false);
  
-        alert.setButton(AlertDialog.BUTTON_POSITIVE, activity.getResources().getText(android.R.string.ok), new DialogInterface.OnClickListener() {
-              public void onClick(DialogInterface dialog, int which) {
-                  synchronized (rundownDialogs) {
-                      rundownDialogs.remove(Dialog.this);
-                      alert.dismiss();
-                  }
-
-                  runOnDismiss.run();
-              }
-        });
-        alert.setButton(AlertDialog.BUTTON_NEUTRAL, activity.getResources().getText(R.string.help), new DialogInterface.OnClickListener() {
-            public void onClick(DialogInterface dialog, int which) {
-                synchronized (rundownDialogs) {
-                    rundownDialogs.remove(Dialog.this);
-                    alert.dismiss();
-                }
-
-                runOnDismiss.run();
-
-                HelpLauncher.launchTroubleshooting(activity);
+        alert.setButton(AlertDialog.BUTTON_POSITIVE, activity.getResources().getText(android.R.string.ok), (dialog, which) -> {
+            synchronized (rundownDialogs) {
+                rundownDialogs.remove(Dialog.this);
+                alert.dismiss();
             }
-        });
-        alert.setOnShowListener(new DialogInterface.OnShowListener(){
 
-            @Override
-            public void onShow(DialogInterface dialog) {
-                // Set focus to the OK button by default
-                Button button = alert.getButton(AlertDialog.BUTTON_POSITIVE);
-                button.setFocusable(true);
-                button.setFocusableInTouchMode(true);
-                button.requestFocus();
-            }
+            runOnDismiss.run();
+        });
+        alert.setOnShowListener(dialog -> {
+            // Set focus to the OK button by default
+            Button button = alert.getButton(AlertDialog.BUTTON_POSITIVE);
+            button.setFocusable(true);
+            button.setFocusableInTouchMode(true);
+            button.requestFocus();
         });
 
         synchronized (rundownDialogs) {

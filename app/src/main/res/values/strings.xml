@@ -33,6 +33,14 @@
     <string name="nettest_text_failure">Your device\'s current network connection seems to be blocking Moonlight. Streaming over the Internet may not work while connected to this network.\n\nThe following network ports were blocked:\n</string>
     <string name="nettest_text_blocked">Your device\'s current network connection is blocking Moonlight. Streaming over the Internet may not work while connected to this network.</string>
 
+    <!-- TCP ping test strings -->
+    <string name="nettest_pc_tcp_title">Host Reachability Test</string>
+    <string name="nettest_pc_tcp_testing">Testing TCP connection to host…</string>
+    <string name="nettest_pc_tcp_success">✓ TCP connection successful</string>
+    <string name="nettest_pc_tcp_failed">✗ TCP connection failed</string>
+    <string name="nettest_pc_tcp_latency">Latency: %d ms</string>
+    <string name="nettest_pc_no_address">No address available for this PC</string>
+
     <!-- Pair messages -->
     <string name="pairing">Pairing…</string>
     <string name="pair_pc_offline">Computer is offline</string>

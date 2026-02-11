@@ -625,7 +625,7 @@ public class PcView extends FragmentActivity implements AdapterFragmentCallbacks
                 return true;
 
             case TEST_NETWORK_ID:
-                ServerHelper.doNetworkTest(PcView.this);
+                ServerHelper.doNetworkTest(PcView.this, computer.details);
                 return true;
 
             default:

@@ -83,36 +83,86 @@ public class ServerHelper {
         parent.startActivity(createStartIntent(parent, app, computer, managerBinder));
     }
 
-    public static void doNetworkTest(final Activity parent) {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                SpinnerDialog spinnerDialog = SpinnerDialog.displayDialog(parent,
-                        parent.getResources().getString(R.string.nettest_title_waiting),
-                        parent.getResources().getString(R.string.nettest_text_waiting),
-                        false);
+    public static void doNetworkTest(final Activity parent, final ComputerDetails computer) {
+        new Thread(() -> {
+            SpinnerDialog spinnerDialog = SpinnerDialog.displayDialog(parent,
+                    parent.getResources().getString(R.string.nettest_title_waiting),
+                    parent.getResources().getString(R.string.nettest_text_waiting),
+                    false);
 
-                int ret = MoonBridge.testClientConnectivity(CONNECTION_TEST_SERVER, 443, MoonBridge.ML_PORT_FLAG_ALL);
-                spinnerDialog.dismiss();
+            StringBuilder dialogSummary = new StringBuilder();
 
-                String dialogSummary;
-                if (ret == MoonBridge.ML_TEST_RESULT_INCONCLUSIVE) {
-                    dialogSummary = parent.getResources().getString(R.string.nettest_text_inconclusive);
-                }
-                else if (ret == 0) {
-                    dialogSummary = parent.getResources().getString(R.string.nettest_text_success);
-                }
-                else {
-                    dialogSummary = parent.getResources().getString(R.string.nettest_text_failure);
-                    dialogSummary += MoonBridge.stringifyPortFlags(ret, "\n");
+            // First, test TCP connectivity to the host if computer details are provided
+            if (computer != null) {
+                boolean hasAnyAddress = false;
+
+                // Test all available addresses
+                if (computer.activeAddress != null) {
+                    hasAnyAddress = true;
+                    dialogSummary.append("Active Address (").append(computer.activeAddress).append("):\n");
+                    TcpReachability.TcpPingResult result = TcpReachability.tcpPingAddress(computer.activeAddress);
+                    appendPingResult(parent, dialogSummary, result);
                 }
 
-                Dialog.displayDialog(parent,
-                        parent.getResources().getString(R.string.nettest_title_done),
-                        dialogSummary,
-                        false);
+                if (computer.localAddress != null && !computer.localAddress.equals(computer.activeAddress)) {
+                    hasAnyAddress = true;
+                    dialogSummary.append("Local Address (").append(computer.localAddress).append("):\n");
+                    TcpReachability.TcpPingResult result = TcpReachability.tcpPingAddress(computer.localAddress);
+                    appendPingResult(parent, dialogSummary, result);
+                }
+
+                if (computer.remoteAddress != null && !computer.remoteAddress.equals(computer.activeAddress)) {
+                    hasAnyAddress = true;
+                    dialogSummary.append("Remote Address (").append(computer.remoteAddress).append("):\n");
+                    TcpReachability.TcpPingResult result = TcpReachability.tcpPingAddress(computer.remoteAddress);
+                    appendPingResult(parent, dialogSummary, result);
+                }
+
+                if (computer.manualAddress != null && !computer.manualAddress.equals(computer.activeAddress)) {
+                    hasAnyAddress = true;
+                    dialogSummary.append("Manual Address (").append(computer.manualAddress).append("):\n");
+                    TcpReachability.TcpPingResult result = TcpReachability.tcpPingAddress(computer.manualAddress);
+                    appendPingResult(parent, dialogSummary, result);
+                }
+
+                if (computer.ipv6Address != null && !computer.ipv6Address.equals(computer.activeAddress)) {
+                    hasAnyAddress = true;
+                    dialogSummary.append("IPv6 Address (").append(computer.ipv6Address).append("):\n");
+                    TcpReachability.TcpPingResult result = TcpReachability.tcpPingAddress(computer.ipv6Address);
+                    appendPingResult(parent, dialogSummary, result);
+                }
+
+                if (!hasAnyAddress) {
+                    dialogSummary.append(parent.getResources().getString(R.string.nettest_pc_no_address)).append("\n");
+                }
             }
+            spinnerDialog.dismiss();
+            Dialog.displayDialog(parent,
+                    parent.getResources().getString(R.string.nettest_title_done),
+                    dialogSummary.toString(),
+                    false);
         }).start();
+    }
+
+    private static void appendPingResult(Activity parent, StringBuilder sb, TcpReachability.TcpPingResult result) {
+        if (result.success) {
+            sb.append("  ").append(parent.getResources().getString(R.string.nettest_pc_tcp_success));
+            sb.append(" (").append(String.format(parent.getResources().getString(R.string.nettest_pc_tcp_latency), result.latencyMs)).append(")\n\n");
+        } else {
+            sb.append("  ").append(parent.getResources().getString(R.string.nettest_pc_tcp_failed));
+            if (result.errorMessage != null) {
+                sb.append("\n  ").append(result.errorMessage);
+            }
+            sb.append("\n\n");
+        }
+    }
+
+    /**
+     * @deprecated Use {@link #doNetworkTest(Activity, ComputerDetails)} instead
+     */
+    @Deprecated
+    public static void doNetworkTest(final Activity parent) {
+        doNetworkTest(parent, null);
     }
 
     public static void doQuit(final Activity parent,

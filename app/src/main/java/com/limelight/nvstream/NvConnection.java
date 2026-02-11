@@ -7,9 +7,8 @@ import android.net.IpPrefix;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
-import android.net.NetworkInfo;
 import android.net.RouteInfo;
-import android.os.Build;
+import android.util.Log;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -19,8 +18,6 @@ import java.nio.ByteBuffer;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
-import java.util.Timer;
-import java.util.TimerTask;
 import java.util.concurrent.Semaphore;
 
 import javax.crypto.KeyGenerator;
@@ -41,16 +38,16 @@ import com.limelight.nvstream.input.MouseButtonPacket;
 import com.limelight.nvstream.jni.MoonBridge;
 
 public class NvConnection {
+    private static final String TAG = "NvConnection";
     // Context parameters
-    private LimelightCryptoProvider cryptoProvider;
-    private String uniqueId;
-    private ConnectionContext context;
-    private static Semaphore connectionAllowed = new Semaphore(1);
+    private final LimelightCryptoProvider cryptoProvider;
+    private final String uniqueId;
+    private final ConnectionContext context;
+    private static final Semaphore connectionAllowed = new Semaphore(1);
     private final boolean isMonkey;
     private final Context appContext;
 
-    public NvConnection(Context appContext, ComputerDetails.AddressTuple host, int httpsPort, String uniqueId, StreamConfiguration config, LimelightCryptoProvider cryptoProvider, X509Certificate serverCert)
-    {
+    public NvConnection(Context appContext, ComputerDetails.AddressTuple host, int httpsPort, String uniqueId, StreamConfiguration config, LimelightCryptoProvider cryptoProvider, X509Certificate serverCert) {
         this.appContext = appContext;
         this.cryptoProvider = cryptoProvider;
         this.uniqueId = uniqueId;
@@ -67,7 +64,7 @@ public class NvConnection {
 
         this.isMonkey = ActivityManager.isUserAMonkey();
     }
-    
+
     private static SecretKey generateRiAesKey() {
         try {
             KeyGenerator keyGen = KeyGenerator.getInstance("AES");
@@ -77,11 +74,11 @@ public class NvConnection {
 
             return keyGen.generateKey();
         } catch (NoSuchAlgorithmException e) {
-            e.printStackTrace();
+            Log.e(TAG, "generateRiAesKey: " + e.getMessage(), e);
             throw new RuntimeException(e);
         }
     }
-    
+
     private static int generateRiKeyId() {
         return new SecureRandom().nextInt();
     }
@@ -114,7 +111,7 @@ public class NvConnection {
                 s.connect(new InetSocketAddress(addr, context.serverAddress.port), 1000);
                 return addr;
             } catch (IOException e) {
-                e.printStackTrace();
+                Log.w(TAG, "Address " + addr.getHostAddress() + " is not reachable: " + e.getMessage());
             }
         }
 
@@ -122,99 +119,67 @@ public class NvConnection {
         // address, we'll use the first available address and hope for the best.
         if (addrs.length > 0) {
             return addrs[0];
-        }
-        else {
-            throw new IOException("No addresses found for "+context.serverAddress);
+        } else {
+            throw new IOException("No addresses found for " + context.serverAddress);
         }
     }
 
     private int detectServerConnectionType() {
         ConnectivityManager connMgr = (ConnectivityManager) appContext.getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            Network activeNetwork = connMgr.getActiveNetwork();
-            if (activeNetwork != null) {
-                NetworkCapabilities netCaps = connMgr.getNetworkCapabilities(activeNetwork);
-                if (netCaps != null) {
-                    if (netCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) ||
-                            !netCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) {
-                        // VPNs are treated as remote connections
-                        return StreamConfiguration.STREAM_CFG_REMOTE;
-                    }
-                    else if (netCaps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
-                        // Cellular is always treated as remote to avoid any possible
-                        // issues with 464XLAT or similar technologies.
-                        return StreamConfiguration.STREAM_CFG_REMOTE;
-                    }
-                }
-
-                // Check if the server address is on-link
-                LinkProperties linkProperties = connMgr.getLinkProperties(activeNetwork);
-                if (linkProperties != null) {
-                    InetAddress serverAddress;
-                    try {
-                        serverAddress = resolveServerAddress();
-                    } catch (IOException e) {
-                        e.printStackTrace();
-
-                        // We can't decide without being able to resolve the server address
-                        return StreamConfiguration.STREAM_CFG_AUTO;
-                    }
-
-                    // If the address is in the NAT64 prefix, always treat it as remote
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        IpPrefix nat64Prefix = linkProperties.getNat64Prefix();
-                        if (nat64Prefix != null && nat64Prefix.contains(serverAddress)) {
-                            return StreamConfiguration.STREAM_CFG_REMOTE;
-                        }
-                    }
-
-                    for (RouteInfo route : linkProperties.getRoutes()) {
-                        // Skip non-unicast routes (which are all we get prior to Android 13)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && route.getType() != RouteInfo.RTN_UNICAST) {
-                            continue;
-                        }
-
-                        // Find the first route that matches this address
-                        if (route.matches(serverAddress)) {
-                            // If there's no gateway, this is an on-link destination
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                                // We want to use hasGateway() because getGateway() doesn't adhere
-                                // to documented behavior of returning null for on-link addresses.
-                                if (!route.hasGateway()) {
-                                    return StreamConfiguration.STREAM_CFG_LOCAL;
-                                }
-                            }
-                            else {
-                                // getGateway() is documented to return null for on-link destinations,
-                                // but it actually returns the unspecified address (0.0.0.0 or ::).
-                                InetAddress gateway = route.getGateway();
-                                if (gateway == null || gateway.isAnyLocalAddress()) {
-                                    return StreamConfiguration.STREAM_CFG_LOCAL;
-                                }
-                            }
-
-                            // We _should_ stop after the first matching route, but for some reason
-                            // Android doesn't always report IPv6 routes in descending order of
-                            // specificity and metric. To handle that case, we enumerate all matching
-                            // routes, assuming that an on-link route will always be preferred.
-                        }
-                    }
+        Network activeNetwork = connMgr.getActiveNetwork();
+        if (activeNetwork != null) {
+            NetworkCapabilities netCaps = connMgr.getNetworkCapabilities(activeNetwork);
+            if (netCaps != null) {
+                if (netCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) ||
+                        !netCaps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) {
+                    // VPNs are treated as remote connections
+                    return StreamConfiguration.STREAM_CFG_REMOTE;
+                } else if (netCaps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                    // Cellular is always treated as remote to avoid any possible
+                    // issues with 464XLAT or similar technologies.
+                    return StreamConfiguration.STREAM_CFG_REMOTE;
                 }
             }
-        }
-        else {
-            NetworkInfo activeNetworkInfo = connMgr.getActiveNetworkInfo();
-            if (activeNetworkInfo != null) {
-                switch (activeNetworkInfo.getType()) {
-                    case ConnectivityManager.TYPE_VPN:
-                    case ConnectivityManager.TYPE_MOBILE:
-                    case ConnectivityManager.TYPE_MOBILE_DUN:
-                    case ConnectivityManager.TYPE_MOBILE_HIPRI:
-                    case ConnectivityManager.TYPE_MOBILE_MMS:
-                    case ConnectivityManager.TYPE_MOBILE_SUPL:
-                    case ConnectivityManager.TYPE_WIMAX:
-                        // VPNs and cellular connections are always remote connections
-                        return StreamConfiguration.STREAM_CFG_REMOTE;
+
+            // Check if the server address is on-link
+            LinkProperties linkProperties = connMgr.getLinkProperties(activeNetwork);
+            if (linkProperties != null) {
+                InetAddress serverAddress;
+                try {
+                    serverAddress = resolveServerAddress();
+                } catch (IOException e) {
+                    Log.e(TAG, "detectServerConnectionType: "+e.getMessage(), e);
+
+                    // We can't decide without being able to resolve the server address
+                    return StreamConfiguration.STREAM_CFG_AUTO;
+                }
+
+                // If the address is in the NAT64 prefix, always treat it as remote
+                IpPrefix nat64Prefix = linkProperties.getNat64Prefix();
+                if (nat64Prefix != null && nat64Prefix.contains(serverAddress)) {
+                    return StreamConfiguration.STREAM_CFG_REMOTE;
+                }
+
+                for (RouteInfo route : linkProperties.getRoutes()) {
+                    // Skip non-unicast routes (which are all we get prior to Android 13)
+                    if (route.getType() != RouteInfo.RTN_UNICAST) {
+                        continue;
+                    }
+
+                    // Find the first route that matches this address
+                    if (route.matches(serverAddress)) {
+                        // If there's no gateway, this is an on-link destination
+                        // We want to use hasGateway() because getGateway() doesn't adhere
+                        // to documented behavior of returning null for on-link addresses.
+                        if (!route.hasGateway()) {
+                            return StreamConfiguration.STREAM_CFG_LOCAL;
+                        }
+
+                        // We _should_ stop after the first matching route, but for some reason
+                        // Android doesn't always report IPv6 routes in descending order of
+                        // specificity and metric. To handle that case, we enumerate all matching
+                        // routes, assuming that an on-link route will always be preferred.
+                    }
                 }
             }
         }
@@ -222,13 +187,43 @@ public class NvConnection {
         // If we can't determine the connection type, let moonlight-common-c decide.
         return StreamConfiguration.STREAM_CFG_AUTO;
     }
-    
-    private boolean startApp() throws XmlPullParserException, IOException
-    {
+
+    /**
+     * Apply network-based bitrate cap for cellular connections.
+     * 4G/LTE connections are capped at 50 Mbps to avoid congestion and excessive data usage.
+     *
+     * @param bitrate The calculated bitrate in kbps
+     * @return The capped bitrate in kbps
+     */
+    private int applyNetworkBitrateCap(int bitrate) {
+        // Maximum bitrate for cellular connections (50 Mbps)
+        final int CELLULAR_MAX_BITRATE_KBPS = 50000;
+
+        ConnectivityManager connMgr = (ConnectivityManager) appContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (connMgr == null) {
+            return bitrate;
+        }
+
+        Network activeNetwork = connMgr.getActiveNetwork();
+        if (activeNetwork != null) {
+            NetworkCapabilities netCaps = connMgr.getNetworkCapabilities(activeNetwork);
+            if (netCaps != null && netCaps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                if (bitrate > CELLULAR_MAX_BITRATE_KBPS) {
+                    LimeLog.info("Cellular network detected, capping bitrate from " + bitrate +
+                            " kbps to " + CELLULAR_MAX_BITRATE_KBPS + " kbps");
+                    return CELLULAR_MAX_BITRATE_KBPS;
+                }
+            }
+        }
+
+        return bitrate;
+    }
+
+    private boolean startApp() throws XmlPullParserException, IOException {
         NvHTTP h = new NvHTTP(context.serverAddress, context.httpsPort, uniqueId, context.serverCert, cryptoProvider);
 
         String serverInfo = h.getServerInfo(true);
-        
+
         context.serverAppVersion = h.getServerVersion(serverInfo);
         if (context.serverAppVersion == null) {
             context.connListener.displayMessage("Server version malformed");
@@ -238,39 +233,37 @@ public class NvConnection {
 
         // May be missing for older servers
         context.serverGfeVersion = h.getGfeVersion(serverInfo);
-                
+
         if (h.getPairState(serverInfo) != PairingManager.PairState.PAIRED) {
             context.connListener.displayMessage("Device not paired with computer");
             return false;
         }
 
-        context.serverCodecModeSupport = (int)h.getServerCodecModeSupport(serverInfo);
+        context.serverCodecModeSupport = (int) h.getServerCodecModeSupport(serverInfo);
 
         context.negotiatedHdr = (context.streamConfig.getSupportedVideoFormats() & MoonBridge.VIDEO_FORMAT_MASK_10BIT) != 0;
         if ((context.serverCodecModeSupport & 0x20200) == 0 && context.negotiatedHdr) {
             context.connListener.displayTransientMessage("Your PC GPU does not support streaming HDR. The stream will be SDR.");
             context.negotiatedHdr = false;
         }
-        
+
         //
         // Decide on negotiated stream parameters now
         //
-        
+
         // Check for a supported stream resolution
         if ((context.streamConfig.getWidth() > 4096 || context.streamConfig.getHeight() > 4096) &&
                 (context.streamConfig.getSupportedVideoFormats() & ~MoonBridge.VIDEO_FORMAT_MASK_H264) == 0) {
             context.connListener.displayMessage("Your streaming device must support HEVC or AV1 to stream at resolutions above 4K.");
             return false;
-        }
-        else if (context.streamConfig.getHeight() >= 2160 && !h.supports4K(serverInfo)) {
+        } else if (context.streamConfig.getHeight() >= 2160 && !h.supports4K(serverInfo)) {
             // Client wants 4K but the server can't do it
             context.connListener.displayTransientMessage("You must update GeForce Experience to stream in 4K. The stream will be 1080p.");
-            
+
             // Lower resolution to 1080p
             context.negotiatedWidth = 1920;
             context.negotiatedHeight = 1080;
-        }
-        else {
+        } else {
             // Take what the client wanted
             context.negotiatedWidth = context.streamConfig.getWidth();
             context.negotiatedHeight = context.streamConfig.getHeight();
@@ -282,8 +275,7 @@ public class NvConnection {
             context.negotiatedPacketSize =
                     context.negotiatedRemoteStreaming == StreamConfiguration.STREAM_CFG_REMOTE ?
                             1024 : context.streamConfig.getMaxPacketSize();
-        }
-        else {
+        } else {
             context.negotiatedRemoteStreaming = context.streamConfig.getRemote();
             context.negotiatedPacketSize = context.streamConfig.getMaxPacketSize();
         }
@@ -297,6 +289,10 @@ public class NvConnection {
                     context.streamConfig.getSupportedVideoFormats());
             context.negotiatedBitrate = com.limelight.preferences.PreferenceConfiguration
                     .getDefaultBitrateForVideoFormat(appContext, predictedVideoFormat);
+
+            // Apply network-based bitrate cap for cellular connections
+            context.negotiatedBitrate = applyNetworkBitrateCap(context.negotiatedBitrate);
+
             LimeLog.info("Predicted video format: 0x" + Integer.toHexString(predictedVideoFormat) +
                     ", negotiated bitrate: " + context.negotiatedBitrate + " kbps");
         } else {
@@ -307,9 +303,9 @@ public class NvConnection {
         //
         // Video stream format will be decided during the RTSP handshake
         //
-        
+
         NvApp app = context.streamConfig.getApp();
-        
+
         // If the client did not provide an exact app ID, do a lookup with the applist
         if (!context.streamConfig.getApp().isInitialized()) {
             LimeLog.info("Using deprecated app lookup method - Please specify an app ID in your StreamConfiguration instead");
@@ -319,7 +315,7 @@ public class NvConnection {
                 return false;
             }
         }
-        
+
         // If there's a game running, resume it
         if (h.getCurrentGame(serverInfo) != 0) {
             try {
@@ -337,10 +333,9 @@ public class NvConnection {
                     // Because this is fairly common, we'll display a more detailed message.
                     context.connListener.displayMessage("This session wasn't started by this device," +
                             " so it cannot be resumed. End streaming on the original " +
-                            "device or the PC itself and try again. (Error code: "+e.getErrorCode()+")");
+                            "device or the PC itself and try again. (Error code: " + e.getErrorCode() + ")");
                     return false;
-                }
-                else if (e.getErrorCode() == 525) {
+                } else if (e.getErrorCode() == 525) {
                     context.connListener.displayMessage("The application is minimized. Resume it on the PC manually or " +
                             "quit the session and start streaming again.");
                     return false;
@@ -348,11 +343,10 @@ public class NvConnection {
                     throw e;
                 }
             }
-            
+
             LimeLog.info("Resumed existing game session");
             return true;
-        }
-        else {
+        } else {
             return launchNotRunningApp(h, context);
         }
     }
@@ -363,22 +357,21 @@ public class NvConnection {
             if (!h.quitApp()) {
                 context.connListener.displayMessage("Failed to quit previous session! You must quit it manually");
                 return false;
-            } 
+            }
         } catch (HostHttpResponseException e) {
             if (e.getErrorCode() == 599) {
                 context.connListener.displayMessage("This session wasn't started by this device," +
                         " so it cannot be quit. End streaming on the original " +
-                        "device or the PC itself. (Error code: "+e.getErrorCode()+")");
+                        "device or the PC itself. (Error code: " + e.getErrorCode() + ")");
                 return false;
-            }
-            else {
+            } else {
                 throw e;
             }
         }
 
         return launchNotRunningApp(h, context);
     }
-    
+
     private boolean launchNotRunningApp(NvHTTP h, ConnectionContext context)
             throws IOException, XmlPullParserException {
         // Launch the app since it's not running
@@ -386,124 +379,115 @@ public class NvConnection {
             context.connListener.displayMessage("Failed to launch application");
             return false;
         }
-        
+
         LimeLog.info("Launched new game session");
-        
+
         return true;
     }
 
-    public void start(final AudioRenderer audioRenderer, final VideoDecoderRenderer videoDecoderRenderer, final NvConnectionListener connectionListener)
-    {
-        new Thread(new Runnable() {
-            public void run() {
-                context.connListener = connectionListener;
-                context.videoCapabilities = videoDecoderRenderer.getCapabilities();
+    public void start(final AudioRenderer audioRenderer, final VideoDecoderRenderer videoDecoderRenderer, final NvConnectionListener connectionListener) {
+        new Thread(() -> {
+            context.connListener = connectionListener;
+            context.videoCapabilities = videoDecoderRenderer.getCapabilities();
 
-                String appName = context.streamConfig.getApp().getAppName();
+            String appName = context.streamConfig.getApp().getAppName();
 
-                context.connListener.stageStarting(appName);
+            context.connListener.stageStarting(appName);
 
-                try {
-                    if (!startApp()) {
-                        context.connListener.stageFailed(appName, 0, 0);
-                        return;
-                    }
-                    context.connListener.stageComplete(appName);
-                } catch (HostHttpResponseException e) {
-                    e.printStackTrace();
-                    context.connListener.displayMessage(e.getMessage());
-                    context.connListener.stageFailed(appName, 0, e.getErrorCode());
-                    return;
-                } catch (XmlPullParserException | IOException e) {
-                    e.printStackTrace();
-                    context.connListener.displayMessage(e.getMessage());
-                    context.connListener.stageFailed(appName, MoonBridge.ML_PORT_FLAG_TCP_47984 | MoonBridge.ML_PORT_FLAG_TCP_47989, 0);
-                    return;
-                }
-
-                ByteBuffer ib = ByteBuffer.allocate(16);
-                ib.putInt(context.riKeyId);
-
-                // Acquire the connection semaphore to ensure we only have one
-                // connection going at once.
-                try {
-                    connectionAllowed.acquire();
-                } catch (InterruptedException e) {
-                    context.connListener.displayMessage(e.getMessage());
+            try {
+                if (!startApp()) {
                     context.connListener.stageFailed(appName, 0, 0);
                     return;
                 }
+                context.connListener.stageComplete(appName);
+            } catch (HostHttpResponseException e) {
+                Log.e(TAG, "run: "+e.getMessage(), e);
+                context.connListener.displayMessage(e.getMessage());
+                context.connListener.stageFailed(appName, 0, e.getErrorCode());
+                return;
+            } catch (XmlPullParserException | IOException e) {
+                Log.e(TAG, "run: "+e.getMessage(), e);
+                context.connListener.displayMessage(e.getMessage());
+                context.connListener.stageFailed(appName, MoonBridge.ML_PORT_FLAG_TCP_47984 | MoonBridge.ML_PORT_FLAG_TCP_47989, 0);
+                return;
+            }
 
-                // Moonlight-core is not thread-safe with respect to connection start and stop, so
-                // we must not invoke that functionality in parallel.
-                synchronized (MoonBridge.class) {
-                    MoonBridge.setupBridge(videoDecoderRenderer, audioRenderer, connectionListener);
-                    int ret = MoonBridge.startConnection(context.serverAddress.address,
-                            context.serverAppVersion, context.serverGfeVersion, context.rtspSessionUrl,
-                            context.serverCodecModeSupport,
-                            context.negotiatedWidth, context.negotiatedHeight,
-                            context.streamConfig.getRefreshRate(), context.negotiatedBitrate,
-                            context.negotiatedPacketSize, context.negotiatedRemoteStreaming,
-                            context.streamConfig.getAudioConfiguration().toInt(),
-                            context.streamConfig.getSupportedVideoFormats(),
-                            context.streamConfig.getClientRefreshRateX100(),
-                            context.riKey.getEncoded(), ib.array(),
-                            context.videoCapabilities,
-                            context.streamConfig.getColorSpace(),
-                            context.streamConfig.getColorRange());
-                    if (ret != 0) {
-                        // LiStartConnection() failed, so the caller is not expected
-                        // to stop the connection themselves. We need to release their
-                        // semaphore count for them.
-                        connectionAllowed.release();
-                        return;
-                    }
+            ByteBuffer ib = ByteBuffer.allocate(16);
+            ib.putInt(context.riKeyId);
+
+            // Acquire the connection semaphore to ensure we only have one
+            // connection going at once.
+            try {
+                connectionAllowed.acquire();
+            } catch (InterruptedException e) {
+                context.connListener.displayMessage(e.getMessage());
+                context.connListener.stageFailed(appName, 0, 0);
+                return;
+            }
+
+            // Moonlight-core is not thread-safe with respect to connection start and stop, so
+            // we must not invoke that functionality in parallel.
+            synchronized (MoonBridge.class) {
+                MoonBridge.setupBridge(videoDecoderRenderer, audioRenderer, connectionListener);
+                int ret = MoonBridge.startConnection(context.serverAddress.address,
+                        context.serverAppVersion, context.serverGfeVersion, context.rtspSessionUrl,
+                        context.serverCodecModeSupport,
+                        context.negotiatedWidth, context.negotiatedHeight,
+                        context.streamConfig.getRefreshRate(), context.negotiatedBitrate,
+                        context.negotiatedPacketSize, context.negotiatedRemoteStreaming,
+                        context.streamConfig.getAudioConfiguration().toInt(),
+                        context.streamConfig.getSupportedVideoFormats(),
+                        context.streamConfig.getClientRefreshRateX100(),
+                        context.riKey.getEncoded(), ib.array(),
+                        context.videoCapabilities,
+                        context.streamConfig.getColorSpace(),
+                        context.streamConfig.getColorRange());
+                if (ret != 0) {
+                    // LiStartConnection() failed, so the caller is not expected
+                    // to stop the connection themselves. We need to release their
+                    // semaphore count for them.
+                    connectionAllowed.release();
+                    return;
                 }
             }
         }).start();
     }
-    
-    public void sendMouseMove(final short deltaX, final short deltaY)
-    {
+
+    public void sendMouseMove(final short deltaX, final short deltaY) {
         if (!isMonkey) {
             MoonBridge.sendMouseMove(deltaX, deltaY);
         }
     }
 
-    public void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight)
-    {
+    public void sendMousePosition(short x, short y, short referenceWidth, short referenceHeight) {
         if (!isMonkey) {
             MoonBridge.sendMousePosition(x, y, referenceWidth, referenceHeight);
         }
     }
 
-    public void sendMouseMoveAsMousePosition(short deltaX, short deltaY, short referenceWidth, short referenceHeight)
-    {
+    public void sendMouseMoveAsMousePosition(short deltaX, short deltaY, short referenceWidth, short referenceHeight) {
         if (!isMonkey) {
             MoonBridge.sendMouseMoveAsMousePosition(deltaX, deltaY, referenceWidth, referenceHeight);
         }
     }
 
-    public void sendMouseButtonDown(final byte mouseButton)
-    {
+    public void sendMouseButtonDown(final byte mouseButton) {
         if (!isMonkey) {
             MoonBridge.sendMouseButton(MouseButtonPacket.PRESS_EVENT, mouseButton);
         }
     }
-    
-    public void sendMouseButtonUp(final byte mouseButton)
-    {
+
+    public void sendMouseButtonUp(final byte mouseButton) {
         if (!isMonkey) {
             MoonBridge.sendMouseButton(MouseButtonPacket.RELEASE_EVENT, mouseButton);
         }
     }
-    
+
     public void sendControllerInput(final short controllerNumber,
-            final short activeGamepadMask, final int buttonFlags,
-            final byte leftTrigger, final byte rightTrigger,
-            final short leftStickX, final short leftStickY,
-            final short rightStickX, final short rightStickY)
-    {
+                                    final short activeGamepadMask, final int buttonFlags,
+                                    final byte leftTrigger, final byte rightTrigger,
+                                    final short leftStickX, final short leftStickY,
+                                    final short rightStickX, final short rightStickY) {
         if (!isMonkey) {
             MoonBridge.sendMultiControllerInput(controllerNumber, activeGamepadMask, buttonFlags,
                     leftTrigger, rightTrigger, leftStickX, leftStickY, rightStickX, rightStickY);
@@ -515,16 +499,16 @@ public class NvConnection {
             MoonBridge.sendKeyboardInput(keyMap, keyDirection, modifier, flags);
         }
     }
-    
+
     public void sendMouseScroll(final byte scrollClicks) {
         if (!isMonkey) {
-            MoonBridge.sendMouseHighResScroll((short)(scrollClicks * 120)); // WHEEL_DELTA
+            MoonBridge.sendMouseHighResScroll((short) (scrollClicks * 120)); // WHEEL_DELTA
         }
     }
 
     public void sendMouseHScroll(final byte scrollClicks) {
         if (!isMonkey) {
-            MoonBridge.sendMouseHighResHScroll((short)(scrollClicks * 120)); // WHEEL_DELTA
+            MoonBridge.sendMouseHighResHScroll((short) (scrollClicks * 120)); // WHEEL_DELTA
         }
     }
 
@@ -545,8 +529,7 @@ public class NvConnection {
         if (!isMonkey) {
             return MoonBridge.sendTouchEvent(eventType, pointerId, x, y, pressureOrDistance,
                     contactAreaMajor, contactAreaMinor, rotation);
-        }
-        else {
+        } else {
             return MoonBridge.LI_ERR_UNSUPPORTED;
         }
     }
@@ -557,34 +540,29 @@ public class NvConnection {
         if (!isMonkey) {
             return MoonBridge.sendPenEvent(eventType, toolType, penButtons, x, y, pressureOrDistance,
                     contactAreaMajor, contactAreaMinor, rotation, tilt);
-        }
-        else {
+        } else {
             return MoonBridge.LI_ERR_UNSUPPORTED;
         }
     }
 
-    public int sendControllerArrivalEvent(byte controllerNumber, short activeGamepadMask, byte type,
-                                          int supportedButtonFlags, short capabilities) {
-        return MoonBridge.sendControllerArrivalEvent(controllerNumber, activeGamepadMask, type, supportedButtonFlags, capabilities);
+    public void sendControllerArrivalEvent(byte controllerNumber, short activeGamepadMask, byte type,
+                                           int supportedButtonFlags, short capabilities) {
+        MoonBridge.sendControllerArrivalEvent(controllerNumber, activeGamepadMask, type, supportedButtonFlags, capabilities);
     }
 
     public int sendControllerTouchEvent(byte controllerNumber, byte eventType, int pointerId,
                                         float x, float y, float pressure) {
         if (!isMonkey) {
             return MoonBridge.sendControllerTouchEvent(controllerNumber, eventType, pointerId, x, y, pressure);
-        }
-        else {
+        } else {
             return MoonBridge.LI_ERR_UNSUPPORTED;
         }
     }
 
-    public int sendControllerMotionEvent(byte controllerNumber, byte motionType,
-                                         float x, float y, float z) {
+    public void sendControllerMotionEvent(byte controllerNumber, byte motionType,
+                                          float x, float y, float z) {
         if (!isMonkey) {
-            return MoonBridge.sendControllerMotionEvent(controllerNumber, motionType, x, y, z);
-        }
-        else {
-            return MoonBridge.LI_ERR_UNSUPPORTED;
+            MoonBridge.sendControllerMotionEvent(controllerNumber, motionType, x, y, z);
         }
     }
 
