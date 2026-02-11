@@ -1833,7 +1833,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
     }
 
-    private static boolean hasDualAmplitudeControlledRumbleVibrators(VibratorManager vm) {
+    public static boolean hasDualAmplitudeControlledRumbleVibrators(VibratorManager vm) {
         int[] vibratorIds = vm.getVibratorIds();
 
         // There must be exactly 2 vibrators on this device
@@ -1852,7 +1852,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     // This must only be called if hasDualAmplitudeControlledRumbleVibrators() is true!
-    private void rumbleDualVibrators(VibratorManager vm, short lowFreqMotor, short highFreqMotor) {
+    public static void rumbleDualVibrators(VibratorManager vm, short lowFreqMotor, short highFreqMotor) {
         // Normalize motor values to 0-255 amplitudes for VibrationManager
         highFreqMotor = (short)((highFreqMotor >> 8) & 0xFF);
         lowFreqMotor = (short)((lowFreqMotor >> 8) & 0xFF);
@@ -1886,7 +1886,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         vm.vibrate(combo.combine(), vibrationAttributes.build());
     }
 
-    private static boolean hasQuadAmplitudeControlledRumbleVibrators(VibratorManager vm) {
+    public static boolean hasQuadAmplitudeControlledRumbleVibrators(VibratorManager vm) {
         int[] vibratorIds = vm.getVibratorIds();
 
         // There must be exactly 4 vibrators on this device
@@ -1905,7 +1905,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     // This must only be called if hasQuadAmplitudeControlledRumbleVibrators() is true!
-    private void rumbleQuadVibrators(VibratorManager vm, short lowFreqMotor, short highFreqMotor, short leftTrigger, short rightTrigger) {
+    public static void rumbleQuadVibrators(VibratorManager vm, short lowFreqMotor, short highFreqMotor, short leftTrigger, short rightTrigger) {
         // Normalize motor values to 0-255 amplitudes for VibrationManager
         highFreqMotor = (short)((highFreqMotor >> 8) & 0xFF);
         lowFreqMotor = (short)((lowFreqMotor >> 8) & 0xFF);
@@ -1957,7 +1957,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      * - Higher amplitude modulation frequency for "buzzing" feel
      * - Typical in gunfire, light hits, surface vibrations
      */
-    private VibrationEffect createDualMotorWaveformEffect(int lowFreqAmplitude, int highFreqAmplitude) {
+    public static VibrationEffect createDualMotorWaveformEffect(int lowFreqAmplitude, int highFreqAmplitude) {
         // Calculate effective amplitudes (0-255 range)
         int effectiveLowFreq = Math.min(255, lowFreqAmplitude);
         int effectiveHighFreq = Math.min(255, highFreqAmplitude);

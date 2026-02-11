@@ -18,6 +18,7 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.limelight.R;
+import com.limelight.binding.input.ControllerHandler;
 import com.limelight.binding.input.driver.UsbDriverService;
 import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.utils.UiHelper;
@@ -114,8 +115,8 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
                 vibratorInfo.deviceId = deviceId;
                 vibratorInfo.vibratorManager = device.getVibratorManager();
                 vibratorInfo.vibrator = device.getVibrator();
-                vibratorInfo.hasQuadVibrators = hasQuadAmplitudeControlledRumbleVibrators(device.getVibratorManager());
-                vibratorInfo.hasDualVibrators = hasDualAmplitudeControlledRumbleVibrators(device.getVibratorManager());
+                vibratorInfo.hasQuadVibrators = ControllerHandler.hasQuadAmplitudeControlledRumbleVibrators(device.getVibratorManager());
+                vibratorInfo.hasDualVibrators = ControllerHandler.hasDualAmplitudeControlledRumbleVibrators(device.getVibratorManager());
                 gamepadVibrators.add(vibratorInfo);
             }
         }
@@ -181,8 +182,8 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
         // Check vibration support
         info.hasVibration = device.getVibrator().hasVibrator();
         info.hasAmplitudeControl = device.getVibrator().hasAmplitudeControl();
-        info.hasDualMotorVibration = hasDualAmplitudeControlledRumbleVibrators(device.getVibratorManager());
-        info.hasTriggerVibration = hasQuadAmplitudeControlledRumbleVibrators(device.getVibratorManager());
+        info.hasDualMotorVibration = ControllerHandler.hasDualAmplitudeControlledRumbleVibrators(device.getVibratorManager());
+        info.hasTriggerVibration = ControllerHandler.hasQuadAmplitudeControlledRumbleVibrators(device.getVibratorManager());
 
         // Check capabilities
         info.hasMotionSensors = device.getSensorManager().getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER) != null ||
@@ -323,13 +324,13 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
     private void testVibration(boolean lowFreq, boolean highFreq, boolean leftTrigger, boolean rightTrigger) {
         for (VibratorInfo vibratorInfo : gamepadVibrators) {
             if (vibratorInfo.hasQuadVibrators && vibratorInfo.vibratorManager != null) {
-                rumbleQuadVibrators(vibratorInfo.vibratorManager,
+                ControllerHandler.rumbleQuadVibrators(vibratorInfo.vibratorManager,
                         lowFreq ? (short)32767 : 0,
                         highFreq ? (short)32767 : 0,
                         leftTrigger ? (short)32767 : 0,
                         rightTrigger ? (short)32767 : 0);
             } else if (vibratorInfo.hasDualVibrators && vibratorInfo.vibratorManager != null) {
-                rumbleDualVibrators(vibratorInfo.vibratorManager,
+                ControllerHandler.rumbleDualVibrators(vibratorInfo.vibratorManager,
                         lowFreq ? (short)32767 : 0,
                         highFreq ? (short)32767 : 0);
             } else if (vibratorInfo.vibrator != null && vibratorInfo.vibrator.hasVibrator()) {
@@ -369,105 +370,14 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
             return;
         }
 
-        VibrationEffect effect;
+        // Use 255 as max amplitude for the active motors
+        int lowFreqAmplitude = lowFreq ? 255 : 0;
+        int highFreqAmplitude = highFreq ? 255 : 0;
 
-        if (lowFreq && highFreq) {
-            // Both motors: create a complex waveform that combines both characteristics
-            // Alternates between low-freq (strong, slow) and high-freq (lighter, fast) patterns
-            long[] timings = {
-                0,   // delay
-                80,  // low freq pulse (strong)
-                20,  // pause
-                30,  // high freq pulse
-                10,  // pause
-                30,  // high freq pulse
-                10,  // pause
-                80,  // low freq pulse (strong)
-                20,  // pause
-                30,  // high freq pulse
-                10,  // pause
-                30,  // high freq pulse
-                10,  // pause
-                80,  // low freq pulse
-                20,  // pause
-            };
-            int[] amplitudes = {
-                0,    // delay
-                255,  // low freq - strong
-                0,    // pause
-                180,  // high freq
-                0,    // pause
-                180,  // high freq
-                0,    // pause
-                255,  // low freq - strong
-                0,    // pause
-                180,  // high freq
-                0,    // pause
-                180,  // high freq
-                0,    // pause
-                255,  // low freq
-                0,    // pause
-            };
-            effect = VibrationEffect.createWaveform(timings, amplitudes, 0);
-        } else if (lowFreq) {
-            // Low frequency motor simulation: slow, heavy pulses
-            // Creates a deep, throbbing rumble sensation
-            long[] timings = {
-                0,    // delay
-                100,  // on - long pulse
-                50,   // off - short pause
-                100,  // on
-                50,   // off
-                100,  // on
-                50,   // off
-            };
-            int[] amplitudes = {
-                0,    // delay
-                255,  // strong
-                0,    // off
-                230,  // slightly less
-                0,    // off
-                255,  // strong
-                0,    // off
-            };
-            effect = VibrationEffect.createWaveform(timings, amplitudes, 0);
-        } else {
-            // High frequency motor simulation: rapid, short pulses
-            // Creates a sharp, buzzing sensation
-            long[] timings = {
-                0,   // delay
-                25,  // on - short pulse
-                15,  // off
-                25,  // on
-                15,  // off
-                25,  // on
-                15,  // off
-                25,  // on
-                15,  // off
-                25,  // on
-                15,  // off
-                25,  // on
-                15,  // off
-            };
-            int[] amplitudes = {
-                0,    // delay
-                200,  // medium-high
-                0,    // off
-                180,  // slightly less
-                0,    // off
-                200,  // medium-high
-                0,    // off
-                180,  // slightly less
-                0,    // off
-                200,  // medium-high
-                0,    // off
-                180,  // slightly less
-                0,    // off
-            };
-            effect = VibrationEffect.createWaveform(timings, amplitudes, 0);
+        VibrationEffect effect = ControllerHandler.createDualMotorWaveformEffect(lowFreqAmplitude, highFreqAmplitude);
+        if (effect != null) {
+            vibrator.vibrate(effect);
         }
-
-        vibrator.vibrate(effect);
     }
 
     private void stopAllVibration() {
@@ -487,85 +397,6 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
         }
     }
 
-    private static boolean hasDualAmplitudeControlledRumbleVibrators(VibratorManager vm) {
-        int[] vibratorIds = vm.getVibratorIds();
-        if (vibratorIds.length != 2) {
-            return false;
-        }
-        for (int vid : vibratorIds) {
-            if (!vm.getVibrator(vid).hasAmplitudeControl()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean hasQuadAmplitudeControlledRumbleVibrators(VibratorManager vm) {
-        int[] vibratorIds = vm.getVibratorIds();
-        if (vibratorIds.length != 4) {
-            return false;
-        }
-        for (int vid : vibratorIds) {
-            if (!vm.getVibrator(vid).hasAmplitudeControl()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private void rumbleDualVibrators(VibratorManager vm, short lowFreqMotor, short highFreqMotor) {
-        highFreqMotor = (short)((highFreqMotor >> 8) & 0xFF);
-        lowFreqMotor = (short)((lowFreqMotor >> 8) & 0xFF);
-
-        if (lowFreqMotor == 0 && highFreqMotor == 0) {
-            vm.cancel();
-            return;
-        }
-
-        int[] vibratorIds = vm.getVibratorIds();
-        int[] vibratorAmplitudes = new int[] { highFreqMotor, lowFreqMotor };
-
-        android.os.CombinedVibration.ParallelCombination combo = android.os.CombinedVibration.startParallel();
-
-        for (int i = 0; i < vibratorIds.length; i++) {
-            if (vibratorAmplitudes[i] != 0) {
-                combo.addVibrator(vibratorIds[i], VibrationEffect.createOneShot(500, vibratorAmplitudes[i]));
-            }
-        }
-
-        android.os.VibrationAttributes.Builder vibrationAttributes = new android.os.VibrationAttributes.Builder();
-        vibrationAttributes.setUsage(android.os.VibrationAttributes.USAGE_MEDIA);
-
-        vm.vibrate(combo.combine(), vibrationAttributes.build());
-    }
-
-    private void rumbleQuadVibrators(VibratorManager vm, short lowFreqMotor, short highFreqMotor, short leftTrigger, short rightTrigger) {
-        highFreqMotor = (short)((highFreqMotor >> 8) & 0xFF);
-        lowFreqMotor = (short)((lowFreqMotor >> 8) & 0xFF);
-        leftTrigger = (short)((leftTrigger >> 8) & 0xFF);
-        rightTrigger = (short)((rightTrigger >> 8) & 0xFF);
-
-        if (lowFreqMotor == 0 && highFreqMotor == 0 && leftTrigger == 0 && rightTrigger == 0) {
-            vm.cancel();
-            return;
-        }
-
-        int[] vibratorIds = vm.getVibratorIds();
-        int[] vibratorAmplitudes = new int[] { highFreqMotor, lowFreqMotor, leftTrigger, rightTrigger };
-
-        android.os.CombinedVibration.ParallelCombination combo = android.os.CombinedVibration.startParallel();
-
-        for (int i = 0; i < vibratorIds.length; i++) {
-            if (vibratorAmplitudes[i] != 0) {
-                combo.addVibrator(vibratorIds[i], VibrationEffect.createOneShot(500, vibratorAmplitudes[i]));
-            }
-        }
-
-        android.os.VibrationAttributes.Builder vibrationAttributes = new android.os.VibrationAttributes.Builder();
-        vibrationAttributes.setUsage(android.os.VibrationAttributes.USAGE_MEDIA);
-
-        vm.vibrate(combo.combine(), vibrationAttributes.build());
-    }
 
     // InputDeviceListener callbacks
     @Override
