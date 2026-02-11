@@ -110,7 +110,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private static final int STYLUS_UP_DEAD_ZONE_DELAY = 150;
     private static final int STYLUS_UP_DEAD_ZONE_RADIUS = 50;
 
-    private static final int THREE_FINGER_TAP_THRESHOLD = 500;
+    private static final int THREE_FINGER_TAP_THRESHOLD = 800;
 
     private ControllerHandler controllerHandler;
     private KeyboardTranslator keyboardTranslator;
@@ -2273,19 +2273,25 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 int eventY = (int) (event.getY(actionIndex) + yOffset);
 
                 // Special handling for multi-finger gestures (only when touchscreen trackpad is enabled)
-                if (prefConfig.touchscreenTrackpad && event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN) {
+                if (prefConfig.touchscreenTrackpad) {
+                    int actionMasked = event.getActionMasked();
                     int pointerCount = event.getPointerCount();
 
-                    // Track the maximum pointer count during this gesture
-                    if (pointerCount > maxPointerCountInGesture) {
-                        maxPointerCountInGesture = pointerCount;
+                    if (actionMasked == MotionEvent.ACTION_DOWN) {
+                        // First finger down - start tracking the gesture
+                        maxPointerCountInGesture = 1;
                         gestureStartTime = event.getEventTime();
-                    }
+                    } else if (actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+                        // Additional finger down - update max pointer count
+                        if (pointerCount > maxPointerCountInGesture) {
+                            maxPointerCountInGesture = pointerCount;
+                        }
 
-                    if (pointerCount >= 3) {
-                        // Three or more fingers down - cancel normal touch processing
-                        cancelAllTouches();
-                        return true;
+                        if (pointerCount >= 3) {
+                            // Three or more fingers down - cancel normal touch processing
+                            cancelAllTouches();
+                            return true;
+                        }
                     }
                 }
 
