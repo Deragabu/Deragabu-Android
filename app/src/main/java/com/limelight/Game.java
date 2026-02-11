@@ -2289,6 +2289,13 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     return true;
                 }
 
+                // Check for multi-finger tap gestures on finger up (before context null check,
+                // since 3+ finger gestures won't have a valid TouchContext)
+                if ((event.getActionMasked() == MotionEvent.ACTION_POINTER_UP ||
+                        event.getActionMasked() == MotionEvent.ACTION_UP) &&
+                        handleMultiFingerTapGestures(event)) {
+                    return true;
+                }
 
                 TouchContext context = getTouchContext(actionIndex);
                 if (context == null) {
@@ -2305,10 +2312,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         break;
                     case MotionEvent.ACTION_POINTER_UP:
                     case MotionEvent.ACTION_UP:
-                        // Check for multi-finger tap gestures before processing normal touch
-                        if (handleMultiFingerTapGestures(event)) {
-                            return true;
-                        }
 
                         if ((event.getFlags() & MotionEvent.FLAG_CANCELED) != 0) {
                             context.cancelTouch();
