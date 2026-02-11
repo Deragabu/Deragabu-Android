@@ -101,6 +101,13 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private final TouchContext[] touchContextMap = new TouchContext[2];
     private int maxPointerCountInGesture = 0;
 
+    // Four-finger swipe gesture tracking
+    private float fourFingerStartY = 0;
+    private float fourFingerLastY = 0;
+    private boolean fourFingerGestureTriggered = false;
+    private boolean fourFingerGestureActive = false; // True while 4+ fingers are down
+    private static final float FOUR_FINGER_SWIPE_THRESHOLD_DP = 60; // Minimum swipe distance in dp
+
     private static final int REFERENCE_HORIZ_RES = 1280;
     private static final int REFERENCE_VERT_RES = 720;
 
@@ -2000,17 +2007,28 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             return false;
         }
 
-        // Handle multi-finger gestures early, before any other processing
+        // Handle four-finger swipe gestures for keyboard/input bar
         // This ensures gesture detection works regardless of event source classification
         if (prefConfig.touchscreenTrackpad &&
                 event.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER) {
             int actionMasked = event.getActionMasked();
             int pointerCount = event.getPointerCount();
 
+            // Calculate average Y position of all current fingers
+            float avgY = 0;
+            for (int i = 0; i < pointerCount; i++) {
+                avgY += event.getY(i);
+            }
+            avgY /= pointerCount;
+
             switch (actionMasked) {
                 case MotionEvent.ACTION_DOWN:
-                    // First finger down - start tracking the gesture
+                    // First finger down - reset all tracking
                     maxPointerCountInGesture = 1;
+                    fourFingerStartY = 0;
+                    fourFingerLastY = 0;
+                    fourFingerGestureTriggered = false;
+                    fourFingerGestureActive = false;
                     break;
 
                 case MotionEvent.ACTION_POINTER_DOWN:
@@ -2018,46 +2036,88 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     if (pointerCount > maxPointerCountInGesture) {
                         maxPointerCountInGesture = pointerCount;
                     }
-                    break;
-
-                case MotionEvent.ACTION_POINTER_UP:
-                    // A finger lifted but others remain - check if we should trigger gesture
-                    // This helps on tablets where fingers may not lift simultaneously
-                    if (maxPointerCountInGesture >= 3 && pointerCount == 2) {
-                        // Transitioning from 3+ fingers to 2 fingers
-                        // Trigger the gesture now for better responsiveness
-                        int maxFingers = maxPointerCountInGesture;
-                        maxPointerCountInGesture = pointerCount - 1; // Will be 1 after this UP
-
-                        if (maxFingers >= 4) {
-                            showKeyboardWithInput();
-                        } else {
-                            // maxFingers is 3 (we already checked >= 3 above)
-                            toggleKeyboard();
-                        }
+                    // When we reach 4 or more fingers, start tracking
+                    if (pointerCount >= 4 && !fourFingerGestureActive) {
+                        fourFingerGestureActive = true;
+                        fourFingerStartY = avgY;
+                        fourFingerLastY = avgY;
+                        fourFingerGestureTriggered = false;
+                        // Consume the event to prevent interference from other touch handlers
                         return true;
                     }
                     break;
 
-                case MotionEvent.ACTION_UP:
-                    // Last finger up - check for multi-finger gesture
-                    if (pointerCount == 1) {
-                        int maxFingers = maxPointerCountInGesture;
-                        maxPointerCountInGesture = 0;
+                case MotionEvent.ACTION_MOVE:
+                    // Check for four-finger swipe while gesture is active
+                    if (fourFingerGestureActive && pointerCount >= 4) {
+                        if (!fourFingerGestureTriggered) {
+                            fourFingerLastY = avgY;
+                            float deltaY = fourFingerLastY - fourFingerStartY;
 
-                        if (maxFingers >= 4) {
-                            showKeyboardWithInput();
-                            return true;
-                        } else if (maxFingers >= 3) {
-                            toggleKeyboard();
-                            return true;
+                            // Convert threshold from dp to pixels
+                            float density = getResources().getDisplayMetrics().density;
+                            float thresholdPx = FOUR_FINGER_SWIPE_THRESHOLD_DP * density;
+
+                            if (Math.abs(deltaY) >= thresholdPx) {
+                                fourFingerGestureTriggered = true;
+
+                                if (deltaY < 0) {
+                                    // Four-finger swipe UP - show special keys bar (keyboard)
+                                    LimeLog.info("Four-finger swipe UP detected, showing keyboard");
+                                    toggleKeyboard();
+                                } else {
+                                    // Four-finger swipe DOWN - show text input bar
+                                    LimeLog.info("Four-finger swipe DOWN detected, showing input bar");
+                                    showKeyboardWithInput();
+                                }
+                                // Cancel all touch contexts to prevent spurious input
+                                cancelAllTouches();
+                            }
                         }
+                        // Always consume move events while 4+ fingers are active
+                        return true;
                     }
+                    // If gesture was triggered, consume move events until all fingers are up
+                    if (fourFingerGestureTriggered) {
+                        return true;
+                    }
+                    break;
+
+                case MotionEvent.ACTION_POINTER_UP:
+                    // A finger was lifted
+                    if (fourFingerGestureTriggered) {
+                        // Consume event if gesture was triggered
+                        return true;
+                    }
+                    // If we drop below 4 fingers, deactivate gesture tracking
+                    if (pointerCount <= 4) {
+                        fourFingerGestureActive = false;
+                    }
+                    break;
+
+                case MotionEvent.ACTION_UP:
+                    // Last finger up - reset everything
+                    if (fourFingerGestureTriggered) {
+                        maxPointerCountInGesture = 0;
+                        fourFingerStartY = 0;
+                        fourFingerLastY = 0;
+                        fourFingerGestureTriggered = false;
+                        fourFingerGestureActive = false;
+                        return true;
+                    }
+                    maxPointerCountInGesture = 0;
+                    fourFingerStartY = 0;
+                    fourFingerLastY = 0;
+                    fourFingerGestureActive = false;
                     break;
 
                 case MotionEvent.ACTION_CANCEL:
                     // Touch was cancelled - reset tracking
                     maxPointerCountInGesture = 0;
+                    fourFingerStartY = 0;
+                    fourFingerLastY = 0;
+                    fourFingerGestureTriggered = false;
+                    fourFingerGestureActive = false;
                     break;
             }
         }
