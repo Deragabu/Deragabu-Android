@@ -110,14 +110,17 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
                 GamepadInfo info = createGamepadInfo(device);
                 detectedGamepads.add(info);
 
-                // Store vibrator info
+                // Store vibrator info only if the device has vibration support
                 VibratorInfo vibratorInfo = new VibratorInfo();
                 vibratorInfo.deviceId = deviceId;
                 vibratorInfo.vibratorManager = device.getVibratorManager();
                 vibratorInfo.vibrator = device.getVibrator();
+                vibratorInfo.hasVibrator = device.getVibrator().hasVibrator();
                 vibratorInfo.hasQuadVibrators = ControllerHandler.hasQuadAmplitudeControlledRumbleVibrators(device.getVibratorManager());
                 vibratorInfo.hasDualVibrators = ControllerHandler.hasDualAmplitudeControlledRumbleVibrators(device.getVibratorManager());
-                gamepadVibrators.add(vibratorInfo);
+                if (vibratorInfo.hasVibrator) {
+                    gamepadVibrators.add(vibratorInfo);
+                }
             }
         }
 
@@ -438,6 +441,7 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
         int deviceId;
         VibratorManager vibratorManager;
         Vibrator vibrator;
+        boolean hasVibrator;
         boolean hasQuadVibrators;
         boolean hasDualVibrators;
     }
