@@ -52,7 +52,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.AdapterView.AdapterContextMenuInfo;
 
+import androidx.appcompat.widget.AppCompatImageButton;
 import androidx.fragment.app.FragmentActivity;
+
 
 import org.xmlpull.v1.XmlPullParserException;
 
@@ -135,7 +137,7 @@ public class PcView extends FragmentActivity implements AdapterFragmentCallbacks
 
         // Setup the list view
         ImageButton settingsButton = findViewById(R.id.settingsButton);
-        ImageButton addComputerButton = findViewById(R.id.manuallyAddPc);
+        AppCompatImageButton addComputerButton = findViewById(R.id.manuallyAddPc);
         ImageButton helpButton = findViewById(R.id.helpButton);
 
         settingsButton.setOnClickListener(v -> startActivity(new Intent(PcView.this, StreamSettings.class)));
