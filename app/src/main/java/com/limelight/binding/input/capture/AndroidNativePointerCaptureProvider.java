@@ -23,10 +23,6 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
         this.targetView = targetView;
     }
 
-    public static boolean isCaptureProviderSupported() {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
-    }
-
     // We only capture the pointer if we have a compatible InputDevice
     // present. This is a workaround for an Android 12 regression causing
     // incorrect mouse input when using the SPen.
@@ -95,12 +91,9 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
         // we'll hit the "requestPointerCapture called for a window that has no focus"
         // error and it will not actually capture the cursor.
         Handler h = new Handler();
-        h.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (hasCaptureCompatibleInputDevice()) {
-                    targetView.requestPointerCapture();
-                }
+        h.postDelayed(() -> {
+            if (hasCaptureCompatibleInputDevice()) {
+                targetView.requestPointerCapture();
             }
         }, 500);
     }

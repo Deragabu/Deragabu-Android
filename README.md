@@ -15,46 +15,30 @@ whether in your own home or over the internet.
 | **Video Codec** | HEVC (H.265) or AV1 only |
 | **Minimum Resolution** | 1080P |
 
+### Minimum SoC Requirements
+
+Deragabu requires hardware with MediaCodec C2 low-latency decoder support. The minimum supported SoCs are:
+•	Qualcomm Snapdragon: Snapdragon 845 (Adreno 630) or newer
+•	MediaTek Dimensity: Dimensity 7300 or newer (with `c2.mtk.hevc.decoder.lowlatency` support)
+•	Samsung Exynos: Not recommended due to inconsistent low-latency implementation
+•	Google Tensor: Tensor G3 or newer (Pixel 8 series and later)
+
+**Note**: Devices must support `FEATURE_LowLatency` or vendor-specific low latency options for optimal streaming performance.
+
 ## Features
 * Stream games from your PC to your Android device
-* **Persistent USB controller permissions** - No need to re-authorize USB controllers every time they reconnect
-* On-screen keyboard input with text entry bar
+* **Persistent USB controller permissions** - No need to re-authorize USB controllers every time they reconnect (Includes full Razer Kishi series support)
+* On-screen keyboard input with text entry bar and "Send + Enter" shortcut
 * Auto-copy PIN to clipboard and auto-open browser during pairing process
 * Improved frame statistics tracking and performance monitoring
-* 
+* Support for HEVC (H.265) and AV1 video codecs for better quality streaming
+* Minimum streaming resolution of 1080P for enhanced visual experience
+* Streamlined controller connection experience with "Use by default" option for persistent authorization
+* Better code organization with extracted methods for handling SPS/PPS/VPS and frame statistics
+* Major refactoring of the `submitDecodeUnit` function for improved readability and maintainability
+* Enhanced vibration simulation with proper detection of vibration capabilities for all connected controllers
 
-## Recent Changes
-
-### Video Format & Resolution Updates
-- 🎥 **Removed H.264 (AVC) support** - Only HEVC (H.265) and AV1 codecs are supported for better quality
-- 📺 **Removed 720P support** - Minimum streaming resolution is now 1080P
-- ⬆️ **Default resolution upgraded** - New installations default to 1080P instead of 720P
-- 🔄 **Legacy 720P settings auto-upgraded** - Existing 720P configurations automatically upgraded to 1080P
-
-### USB Controller Improvements
-- ✨ **Persistent USB permissions** - USB controllers now retain authorization after first connection
-- 🎮 **Full Razer Kishi series support** - Added complete support for all Kishi models (original, V2, V2 Pro, Ultra)
-- 📳 **Enhanced vibration simulation** - Better rumble support with proper vibration capability detection for all connected controllers
-- 📱 Streamlined controller connection experience - Select "Use by default" once, never authorize again
-
-### Keyboard Input Enhancement
-- ⌨️ **Send + Enter button** - New button to send text and automatically press Enter key
-
-### Pairing Process Improvements
-- 📋 **Auto-copy PIN to clipboard** - PIN code is automatically copied when pairing starts
-- 🌐 **Auto-open browser** - Browser automatically opens to server's web interface during pairing
-- 📱 Added Android 13+ notification permission handling for foreground service
-
-### Code Quality
-- 🔧 **Major refactoring** of `submitDecodeUnit` function - Reduced from 345+ lines to modular functions
-- 📊 Improved frame statistics tracking and performance monitoring
-- 🎨 Better code organization with extracted methods for SPS/PPS/VPS handling
-
-## Building
-* Install Android Studio and the Android NDK
-* Run ‘git submodule update --init --recursive’ from within moonlight-android/
-* In moonlight-android/, create a file called ‘local.properties’. Add an ‘ndk.dir=’ property to the local.properties file and set it equal to your NDK directory.
-* Build the APK using Android Studio or gradle
+For a detailed summary of changes, see [CHANGES_SUMMARY.md](docs/CHANGES_SUMMARY.md).
 
 ## Authors
 

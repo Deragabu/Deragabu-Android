@@ -8,6 +8,7 @@ import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.media.audiofx.AudioEffect;
 import android.os.Build;
+import android.util.Log;
 
 import com.limelight.LimeLog;
 import com.limelight.nvstream.av.audio.AudioRenderer;
@@ -15,6 +16,7 @@ import com.limelight.nvstream.jni.MoonBridge;
 
 public class AndroidAudioRenderer implements AudioRenderer {
 
+    private static final String TAG = "AndroidAudioRenderer";
     private final Context context;
     private final boolean enableAudioFx;
 
@@ -156,7 +158,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
                 break;
             } catch (Exception e) {
                 // Try to release the AudioTrack if we got far enough
-                e.printStackTrace();
+                Log.e(TAG, "setup: "+e.getMessage(), e);
                 try {
                     if (track != null) {
                         track.release();
