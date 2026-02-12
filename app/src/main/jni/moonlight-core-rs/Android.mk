@@ -12,7 +12,7 @@ LOCAL_PATH := $(MY_LOCAL_PATH)
 
 # Import pre-built Rust shared library
 include $(CLEAR_VARS)
-LOCAL_MODULE := moonlight-core
+LOCAL_MODULE := moonlight_core
 LOCAL_SRC_FILES := jniLibs/$(TARGET_ARCH_ABI)/libmoonlight_core.so
 include $(PREBUILT_SHARED_LIBRARY)
 

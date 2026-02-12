@@ -138,7 +138,7 @@ public class MoonBridge {
     private static NvConnectionListener connectionListener;
 
     static {
-        System.loadLibrary("moonlight-core");
+        System.loadLibrary("moonlight_core");
         init();
     }
 

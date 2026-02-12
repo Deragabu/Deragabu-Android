@@ -1,9 +1,11 @@
 //! Build script for moonlight-core-rs
 //!
 //! This script compiles moonlight-common-c and libopus using the cc crate for reliable cross-compilation.
+//! It automatically downloads the latest moonlight-common-c source from GitHub if not present.
 
 use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 
 fn main() {
     let target = env::var("TARGET").unwrap();
@@ -12,7 +14,6 @@ fn main() {
 
     // Tell cargo to re-run if our source files change
     println!("cargo:rerun-if-changed=src/ffi.rs");
-    println!("cargo:rerun-if-changed={}", moonlight_common_c_dir.display());
 
     // Only build for Android targets
     if !target.contains("android") {
@@ -24,6 +25,11 @@ fn main() {
         eprintln!("Warning: Only arm64-v8a is supported, skipping build for {}", target);
         return;
     }
+
+    // Download moonlight-common-c if not present or update if exists
+    download_or_update_moonlight_common_c(&moonlight_common_c_dir);
+
+    println!("cargo:rerun-if-changed={}", moonlight_common_c_dir.display());
 
     // Build opus library
     build_opus();
@@ -99,23 +105,8 @@ fn build_opus() {
     let opus_dir = if project_opus_dir.exists() {
         project_opus_dir
     } else {
-        // Try to find in cargo registry (from audiopus_sys or opus-sys)
-        let home = env::var("CARGO_HOME")
-            .or_else(|_| env::var("HOME").map(|h| format!("{}/.cargo", h)))
-            .unwrap_or_else(|_| {
-                // Windows fallback
-                let userprofile = env::var("USERPROFILE").unwrap_or_default();
-                format!("{}/.cargo", userprofile)
-            });
-
-        let registry_src = PathBuf::from(&home).join("registry/src");
-        match find_opus_source(&registry_src) {
-            Some(dir) => dir,
-            None => {
-                // Download opus source
-                download_opus(&out_dir)
-            }
-        }
+        // Download opus source directly
+        download_opus(&out_dir)
     };
 
     if !opus_dir.exists() {
@@ -333,36 +324,6 @@ fn build_opus() {
     println!("cargo:root={}", out_dir.display());
 }
 
-/// Find opus source directory in cargo registry
-fn find_opus_source(registry_src: &PathBuf) -> Option<PathBuf> {
-    if !registry_src.exists() {
-        return None;
-    }
-
-    // Look for index.crates.io-* directories
-    for entry in std::fs::read_dir(registry_src).ok()? {
-        let entry = entry.ok()?;
-        let path = entry.path();
-        if path.is_dir() {
-            // Look for audiopus_sys-* or opus-sys-* directories
-            for pkg_entry in std::fs::read_dir(&path).ok()? {
-                let pkg_entry = pkg_entry.ok()?;
-                let pkg_path = pkg_entry.path();
-                if pkg_path.is_dir() {
-                    let name = pkg_path.file_name()?.to_str()?;
-                    if name.starts_with("audiopus_sys-") || name.starts_with("opus-sys-") {
-                        let opus_path = pkg_path.join("opus");
-                        if opus_path.exists() && opus_path.join("include").exists() {
-                            return Some(opus_path);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
 
 /// Download opus source code
 fn download_opus(out_dir: &PathBuf) -> PathBuf {
@@ -375,7 +336,7 @@ fn download_opus(out_dir: &PathBuf) -> PathBuf {
     }
 
     // Clone opus from git
-    let opus_version = "v1.4";
+    let opus_version = "v1.6.1";
     let status = Command::new("git")
         .args(&["clone", "--depth", "1", "--branch", opus_version,
                 "https://github.com/xiph/opus.git"])
@@ -394,3 +355,74 @@ fn download_opus(out_dir: &PathBuf) -> PathBuf {
     opus_dir
 }
 
+/// Download or update moonlight-common-c from GitHub
+fn download_or_update_moonlight_common_c(target_dir: &PathBuf) {
+    let repo_url = "https://github.com/moonlight-stream/moonlight-common-c.git";
+
+    if target_dir.exists() && target_dir.join(".git").exists() {
+        // Directory exists and is a git repo - pull latest changes
+        println!("cargo:warning=Updating moonlight-common-c from GitHub...");
+
+        let status = Command::new("git")
+            .current_dir(target_dir)
+            .args(["pull", "--ff-only"])
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                println!("cargo:warning=Successfully updated moonlight-common-c");
+            }
+            Ok(_) => {
+                // Pull failed, try to reset and pull
+                println!("cargo:warning=Pull failed, trying to reset and fetch...");
+                let _ = Command::new("git")
+                    .current_dir(target_dir)
+                    .args(["fetch", "origin"])
+                    .status();
+                let _ = Command::new("git")
+                    .current_dir(target_dir)
+                    .args(["reset", "--hard", "origin/master"])
+                    .status();
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to update moonlight-common-c: {}", e);
+            }
+        }
+
+        // Update submodules
+        let _ = Command::new("git")
+            .current_dir(target_dir)
+            .args(["submodule", "update", "--init", "--recursive"])
+            .status();
+    } else {
+        // Directory doesn't exist - clone
+        println!("cargo:warning=Downloading moonlight-common-c from GitHub...");
+
+        // Remove directory if it exists but is not a git repo
+        if target_dir.exists() {
+            let _ = std::fs::remove_dir_all(target_dir);
+        }
+
+        let status = Command::new("git")
+            .args([
+                "clone",
+                "--recursive",
+                "--depth", "1",
+                repo_url,
+            ])
+            .arg(target_dir)
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                println!("cargo:warning=Successfully downloaded moonlight-common-c to {:?}", target_dir);
+            }
+            Ok(s) => {
+                panic!("Failed to clone moonlight-common-c: git exited with status {}", s);
+            }
+            Err(e) => {
+                panic!("Failed to run git to clone moonlight-common-c: {}", e);
+            }
+        }
+    }
+}
