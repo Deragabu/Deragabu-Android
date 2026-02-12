@@ -145,8 +145,8 @@ fn build_opus() {
     build
         .define("OPUS_BUILD", None)
         .define("HAVE_LRINTF", "1")
-        .define("FLOAT_APPROX", None)
         .define("VAR_ARRAYS", None);
+
 
     // CELT sources
     let celt_sources = [

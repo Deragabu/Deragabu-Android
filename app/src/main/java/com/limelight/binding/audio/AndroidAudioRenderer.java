@@ -7,7 +7,6 @@ import android.media.AudioFormat;
 import android.media.AudioManager;
 import android.media.AudioTrack;
 import android.media.audiofx.AudioEffect;
-import android.os.Build;
 import android.util.Log;
 
 import com.limelight.LimeLog;

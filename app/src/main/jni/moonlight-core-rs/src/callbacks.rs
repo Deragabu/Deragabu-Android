@@ -1,84 +1,42 @@
-//! Callback implementations for video/audio rendering and connection status
+//! Callback implementations for moonlight-common-c
 //!
-//! Ported from callbacks.c
-//!
-//! This module uses Rust's audiopus crate for Opus decoding instead of C libopus.
+//! This module provides callback functions for video decoding, audio rendering,
+//! and connection events that bridge between moonlight-common-c and the JNI layer.
 
 use crate::ffi::*;
-use crate::opus::{OpusConfig, ThreadSafeOpusDecoder};
-use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JShortArray, JValue};
-use jni::sys::{jbyte, jchar, jlong, jshort};
-use jni::JNIEnv;
-use jni::JavaVM;
+use crate::jni_helpers::*;
+use crate::opus::*;
 use libc::{c_char, c_int, c_void};
-use log::{error, info};
-use once_cell::sync::OnceCell;
-use std::sync::Mutex;
+use std::ptr;
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
+use log::{info, error, debug};
 
-// Global state for JNI callbacks
-static JVM: OnceCell<JavaVM> = OnceCell::new();
+// Global state for callbacks
+static OPUS_DECODER: AtomicPtr<OpusMSDecoder> = AtomicPtr::new(ptr::null_mut());
+static mut OPUS_CONFIG: Option<OPUS_MULTISTREAM_CONFIGURATION> = None;
 
-// Bridge class name for JNI calls
-const BRIDGE_CLASS_NAME: &str = "com/limelight/nvstream/jni/MoonBridge";
+// Audio sample counter for debugging
+static AUDIO_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
 
-// Opus decoder state - now using Rust implementation
-static OPUS_DECODER: OnceCell<ThreadSafeOpusDecoder> = OnceCell::new();
+// Flag to indicate if JNI callbacks are enabled
+static JNI_CALLBACKS_ENABLED: AtomicBool = AtomicBool::new(false);
 
-// Decoded buffers
-static DECODED_FRAME_BUFFER: OnceCell<Mutex<Option<GlobalRef>>> = OnceCell::new();
-static DECODED_AUDIO_BUFFER: OnceCell<Mutex<Option<GlobalRef>>> = OnceCell::new();
-
-/// Initialize the callback system with JNI environment
-pub fn init_callbacks(env: &mut JNIEnv, _class: &JClass) -> Result<(), jni::errors::Error> {
-    info!("init_callbacks: Starting initialization...");
-
-    // Store JavaVM
-    let jvm = env.get_java_vm()?;
-    info!("init_callbacks: Got JavaVM");
-
-    match JVM.set(jvm) {
-        Ok(_) => info!("init_callbacks: JVM stored successfully"),
-        Err(_) => info!("init_callbacks: JVM was already stored"),
-    }
-
-    // Initialize Opus decoder container
-    info!("init_callbacks: Initializing Opus decoder container...");
-    let _ = OPUS_DECODER.set(ThreadSafeOpusDecoder::new());
-
-    // Initialize buffer containers
-    info!("init_callbacks: Initializing buffer containers...");
-    let _ = DECODED_FRAME_BUFFER.set(Mutex::new(None));
-    let _ = DECODED_AUDIO_BUFFER.set(Mutex::new(None));
-
-    info!("Callbacks initialized successfully (Rust Opus)");
-    Ok(())
+/// Enable or disable JNI callbacks
+pub fn set_jni_callbacks(enabled: bool) {
+    JNI_CALLBACKS_ENABLED.store(enabled, Ordering::SeqCst);
+    info!("JNI callbacks {}", if enabled { "enabled" } else { "disabled" });
 }
 
-/// Get thread-local JNI environment
-fn get_thread_env() -> Option<JNIEnv<'static>> {
-    let jvm = JVM.get()?;
-
-    // Try to get existing env
-    if let Ok(env) = jvm.get_env() {
-        return Some(unsafe { std::mem::transmute(env) });
-    }
-
-    // Attach current thread
-    match jvm.attach_current_thread_permanently() {
-        Ok(env) => Some(unsafe { std::mem::transmute(env) }),
-        Err(e) => {
-            error!("Failed to attach thread: {:?}", e);
-            None
-        }
-    }
+/// Check if JNI callbacks are enabled
+pub fn jni_callbacks_enabled() -> bool {
+    JNI_CALLBACKS_ENABLED.load(Ordering::SeqCst)
 }
 
 // ============================================================================
 // Video Decoder Callbacks
 // ============================================================================
 
-/// Video decoder setup callback
-pub unsafe extern "C" fn bridge_dr_setup(
+pub extern "C" fn bridge_dr_setup(
     video_format: c_int,
     width: c_int,
     height: c_int,
@@ -86,384 +44,428 @@ pub unsafe extern "C" fn bridge_dr_setup(
     _context: *mut c_void,
     _dr_flags: c_int,
 ) -> c_int {
-    let Some(mut env) = get_thread_env() else {
-        error!("bridge_dr_setup: Failed to get thread env");
+    info!("Video decoder setup: format={}, {}x{} @ {}Hz", video_format, width, height, redraw_rate);
+
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return -1,
+    };
+
+    let method = get_dr_setup_method();
+    if method.is_null() {
+        error!("DR setup method not found");
         return -1;
+    }
+
+    let args = [
+        JValue::int(video_format),
+        JValue::int(width),
+        JValue::int(height),
+        JValue::int(redraw_rate),
+    ];
+
+    let err = call_static_int_method(env, method, &args);
+    if check_exception(env) {
+        return -1;
+    }
+
+    if err != 0 {
+        return err;
+    }
+
+    // Create a 32K frame buffer that will increase if needed
+    let buffer = new_byte_array(env, 32768);
+    if buffer.is_null() {
+        return -1;
+    }
+    let global_buffer = new_global_ref(env, buffer);
+    delete_local_ref(env, buffer);
+    set_decoded_frame_buffer(global_buffer);
+
+    0
+}
+
+pub extern "C" fn bridge_dr_start() {
+    debug!("Video decoder start");
+
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
     };
 
-    let result = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeDrSetup",
-        "(IIII)I",
-        &[
-            JValue::Int(video_format),
-            JValue::Int(width),
-            JValue::Int(height),
-            JValue::Int(redraw_rate),
-        ],
-    );
-
-    match result {
-        Ok(val) => {
-            let err = val.i().unwrap_or(-1);
-            if err != 0 {
-                return err;
-            }
-
-            // Allocate frame buffer (32K initial size)
-            if let Ok(buffer) = env.new_byte_array(32768) {
-                if let Ok(global_ref) = env.new_global_ref(&buffer) {
-                    if let Some(buf_lock) = DECODED_FRAME_BUFFER.get() {
-                        if let Ok(mut guard) = buf_lock.lock() {
-                            *guard = Some(global_ref);
-                        }
-                    }
-                }
-            }
-            0
-        }
-        Err(e) => {
-            error!("bridgeDrSetup failed: {:?}", e);
-            -1
-        }
+    let method = get_dr_start_method();
+    if !method.is_null() {
+        call_static_void_method(env, method, &[]);
     }
 }
 
-/// Video decoder start callback
-pub unsafe extern "C" fn bridge_dr_start() {
-    let Some(mut env) = get_thread_env() else {
-        return;
+pub extern "C" fn bridge_dr_stop() {
+    debug!("Video decoder stop");
+
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
     };
-    let _ = env.call_static_method(BRIDGE_CLASS_NAME, "bridgeDrStart", "()V", &[]);
+
+    let method = get_dr_stop_method();
+    if !method.is_null() {
+        call_static_void_method(env, method, &[]);
+    }
 }
 
-/// Video decoder stop callback
-pub unsafe extern "C" fn bridge_dr_stop() {
-    let Some(mut env) = get_thread_env() else {
-        return;
-    };
-    let _ = env.call_static_method(BRIDGE_CLASS_NAME, "bridgeDrStop", "()V", &[]);
-}
+pub extern "C" fn bridge_dr_cleanup() {
+    debug!("Video decoder cleanup");
 
-/// Video decoder cleanup callback
-pub unsafe extern "C" fn bridge_dr_cleanup() {
-    if let Some(buf_lock) = DECODED_FRAME_BUFFER.get() {
-        if let Ok(mut guard) = buf_lock.lock() {
-            *guard = None;
-        }
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
+    };
+
+    // Delete global frame buffer reference
+    let buffer = get_decoded_frame_buffer();
+    if !buffer.is_null() {
+        delete_global_ref(env, buffer);
+        set_decoded_frame_buffer(ptr::null_mut());
     }
 
-    let Some(mut env) = get_thread_env() else {
-        return;
-    };
-    let _ = env.call_static_method(BRIDGE_CLASS_NAME, "bridgeDrCleanup", "()V", &[]);
+    let method = get_dr_cleanup_method();
+    if !method.is_null() {
+        call_static_void_method(env, method, &[]);
+    }
 }
 
-/// Video decoder submit decode unit callback
-pub unsafe extern "C" fn bridge_dr_submit_decode_unit(decode_unit: *mut DECODE_UNIT) -> c_int {
+pub extern "C" fn bridge_dr_submit_decode_unit(decode_unit: *mut DECODE_UNIT) -> c_int {
     if decode_unit.is_null() {
-        return DR_NEED_IDR;
+        return DR_OK;
     }
 
-    let du = &*decode_unit;
-    let Some(mut env) = get_thread_env() else {
-        return DR_NEED_IDR;
-    };
-    let Some(buf_lock) = DECODED_FRAME_BUFFER.get() else {
-        return DR_NEED_IDR;
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return DR_OK,
     };
 
-    let mut guard = match buf_lock.lock() {
-        Ok(g) => g,
-        Err(_) => return DR_NEED_IDR,
-    };
+    let method = get_dr_submit_decode_unit_method();
+    if method.is_null() {
+        return DR_OK;
+    }
 
-    let buffer_ref = match guard.as_ref() {
-        Some(r) => r,
-        None => return DR_NEED_IDR,
-    };
+    let du = unsafe { &*decode_unit };
+    let frame_buffer = get_decoded_frame_buffer();
 
-    let buffer: JByteArray = JByteArray::from(JObject::from_raw(buffer_ref.as_obj().as_raw()));
-    let current_len = env.get_array_length(&buffer).unwrap_or(0);
+    if frame_buffer.is_null() {
+        return DR_OK;
+    }
 
-    if current_len < du.fullLength {
-        drop(buffer);
-        if let Ok(new_buffer) = env.new_byte_array(du.fullLength) {
-            if let Ok(new_ref) = env.new_global_ref(&new_buffer) {
-                *guard = Some(new_ref);
-            }
+    // Increase the size of our frame data buffer if our frame won't fit
+    let current_length = get_array_length(env, frame_buffer);
+    if current_length < du.fullLength {
+        delete_global_ref(env, frame_buffer);
+        let new_buffer = new_byte_array(env, du.fullLength);
+        if new_buffer.is_null() {
+            return DR_OK;
         }
+        let global_buffer = new_global_ref(env, new_buffer);
+        delete_local_ref(env, new_buffer);
+        set_decoded_frame_buffer(global_buffer);
     }
 
-    let buffer_ref = match guard.as_ref() {
-        Some(r) => r,
-        None => return DR_NEED_IDR,
-    };
-    let buffer: JByteArray = JByteArray::from(JObject::from_raw(buffer_ref.as_obj().as_raw()));
+    let frame_buffer = get_decoded_frame_buffer();
 
     let mut current_entry = du.bufferList;
-    let mut offset = 0i32;
+    let mut offset: c_int = 0;
 
     while !current_entry.is_null() {
-        let entry = &*current_entry;
+        let entry = unsafe { &*current_entry };
 
+        // Submit parameter set NALUs separately from picture data
         if entry.bufferType != BUFFER_TYPE_PICDATA {
-            let slice = std::slice::from_raw_parts(entry.data as *const i8, entry.length as usize);
-            if env.set_byte_array_region(&buffer, 0, slice).is_err() {
-                return DR_NEED_IDR;
-            }
+            // Use the beginning of the buffer each time since this is a separate
+            // invocation of the decoder each time.
+            set_byte_array_region(env, frame_buffer, 0, entry.length, entry.data as *const i8);
 
-            let result = env.call_static_method(
-                BRIDGE_CLASS_NAME,
-                "bridgeDrSubmitDecodeUnit",
-                "([BIIIICJJ)I",
-                &[
-                    JValue::Object(&buffer),
-                    JValue::Int(entry.length),
-                    JValue::Int(entry.bufferType),
-                    JValue::Int(du.frameNumber),
-                    JValue::Int(du.frameType),
-                    JValue::Char(du.frameHostProcessingLatency as jchar),
-                    JValue::Long(du.receiveTimeUs as jlong),
-                    JValue::Long(du.enqueueTimeUs as jlong),
-                ],
-            );
+            let args = [
+                JValue::object(frame_buffer),
+                JValue::int(entry.length),
+                JValue::int(entry.bufferType),
+                JValue::int(du.frameNumber),
+                JValue::int(du.frameType),
+                JValue::char(du.frameHostProcessingLatency),
+                JValue::long(du.receiveTimeUs as i64),
+                JValue::long(du.enqueueTimeUs as i64),
+            ];
 
-            if env.exception_check().unwrap_or(true) {
+            let ret = call_static_int_method(env, method, &args);
+            if check_exception(env) {
+                detach_current_thread();
                 return DR_OK;
-            }
-
-            if let Ok(val) = result {
-                let ret = val.i().unwrap_or(DR_NEED_IDR);
-                if ret != DR_OK {
-                    return ret;
-                }
+            } else if ret != DR_OK {
+                return ret;
             }
         } else {
-            let slice = std::slice::from_raw_parts(entry.data as *const i8, entry.length as usize);
-            if env.set_byte_array_region(&buffer, offset, slice).is_err() {
-                return DR_NEED_IDR;
-            }
+            set_byte_array_region(env, frame_buffer, offset, entry.length, entry.data as *const i8);
             offset += entry.length;
         }
 
         current_entry = entry.next;
     }
 
-    let result = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeDrSubmitDecodeUnit",
-        "([BIIIICJJ)I",
-        &[
-            JValue::Object(&buffer),
-            JValue::Int(offset),
-            JValue::Int(BUFFER_TYPE_PICDATA),
-            JValue::Int(du.frameNumber),
-            JValue::Int(du.frameType),
-            JValue::Char(du.frameHostProcessingLatency as jchar),
-            JValue::Long(du.receiveTimeUs as jlong),
-            JValue::Long(du.enqueueTimeUs as jlong),
-        ],
-    );
+    // Submit the picture data
+    let args = [
+        JValue::object(frame_buffer),
+        JValue::int(offset),
+        JValue::int(BUFFER_TYPE_PICDATA),
+        JValue::int(du.frameNumber),
+        JValue::int(du.frameType),
+        JValue::char(du.frameHostProcessingLatency),
+        JValue::long(du.receiveTimeUs as i64),
+        JValue::long(du.enqueueTimeUs as i64),
+    ];
 
-    if env.exception_check().unwrap_or(true) {
+    let ret = call_static_int_method(env, method, &args);
+    if check_exception(env) {
+        detach_current_thread();
         return DR_OK;
     }
 
-    result.map(|v| v.i().unwrap_or(DR_OK)).unwrap_or(DR_OK)
+    ret
 }
 
 // ============================================================================
-// Audio Renderer Callbacks - Using Rust Opus Decoder
+// Audio Renderer Callbacks
 // ============================================================================
 
-/// Audio renderer init callback
-pub unsafe extern "C" fn bridge_ar_init(
+pub extern "C" fn bridge_ar_init(
     audio_configuration: c_int,
     opus_config: *const OPUS_MULTISTREAM_CONFIGURATION,
     _context: *mut c_void,
-    _ar_flags: c_int,
+    _flags: c_int,
 ) -> c_int {
     if opus_config.is_null() {
         return -1;
     }
 
-    let config = &*opus_config;
-    let Some(mut env) = get_thread_env() else {
-        return -1;
+    let config = unsafe { *opus_config };
+    info!("Audio init: config={}, rate={}, channels={}, streams={}, coupled={}, samples_per_frame={}",
+          audio_configuration, config.sampleRate, config.channelCount,
+          config.streams, config.coupledStreams, config.samplesPerFrame);
+    info!("Audio mapping: {:?}", &config.mapping[..config.channelCount as usize]);
+
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return -1,
     };
 
-    let result = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeArInit",
-        "(III)I",
-        &[
-            JValue::Int(audio_configuration),
-            JValue::Int(config.sampleRate),
-            JValue::Int(config.samplesPerFrame),
-        ],
-    );
-
-    let err = match result {
-        Ok(val) => val.i().unwrap_or(-1),
-        Err(_) => -1,
-    };
-
-    if env.exception_check().unwrap_or(true) || err != 0 {
-        return if err != 0 { err } else { -1 };
-    }
-
-    // Create Rust Opus decoder
-    let Some(opus_decoder) = OPUS_DECODER.get() else {
-        return -1;
-    };
-
-    let rust_config = OpusConfig {
-        sample_rate: config.sampleRate,
-        channel_count: config.channelCount,
-        streams: config.streams,
-        coupled_streams: config.coupledStreams,
-        samples_per_frame: config.samplesPerFrame,
-        mapping: config.mapping,
-    };
-
-    if let Err(e) = opus_decoder.initialize(&rust_config) {
-        error!("Failed to create Opus decoder: {}", e);
-        let _ = env.call_static_method(BRIDGE_CLASS_NAME, "bridgeArCleanup", "()V", &[]);
+    let method = get_ar_init_method();
+    if method.is_null() {
+        error!("AR init method not found");
         return -1;
     }
 
-    info!(
-        "Opus decoder initialized: {}Hz, {} channels, {} samples/frame",
-        config.sampleRate, config.channelCount, config.samplesPerFrame
-    );
+    let args = [
+        JValue::int(audio_configuration),
+        JValue::int(config.sampleRate),
+        JValue::int(config.samplesPerFrame),
+    ];
 
-    // Allocate audio buffer
-    let buffer_size = config.channelCount * config.samplesPerFrame;
-    if let Ok(buffer) = env.new_short_array(buffer_size) {
-        if let Ok(global_ref) = env.new_global_ref(&buffer) {
-            if let Some(buf_lock) = DECODED_AUDIO_BUFFER.get() {
-                if let Ok(mut guard) = buf_lock.lock() {
-                    *guard = Some(global_ref);
-                }
-            }
+    let err = call_static_int_method(env, method, &args);
+    if check_exception(env) {
+        return -1;
+    }
+
+    if err != 0 {
+        return err;
+    }
+
+    // Store config for later use
+    unsafe {
+        OPUS_CONFIG = Some(config);
+    }
+
+    // Create opus decoder
+    let mut error: c_int = 0;
+    let decoder = unsafe {
+        opus_multistream_decoder_create(
+            config.sampleRate,
+            config.channelCount,
+            config.streams,
+            config.coupledStreams,
+            config.mapping.as_ptr(),
+            &mut error,
+        )
+    };
+
+    if decoder.is_null() || error != 0 {
+        error!("Failed to create Opus decoder: error={}", error);
+        // Call cleanup on Java side
+        let cleanup_method = get_ar_cleanup_method();
+        if !cleanup_method.is_null() {
+            call_static_void_method(env, cleanup_method, &[]);
         }
+        return -1;
     }
+
+    OPUS_DECODER.store(decoder, Ordering::SeqCst);
+
+    // Pre-allocate the decoded audio buffer
+    let buffer_size = config.channelCount * config.samplesPerFrame;
+    let audio_buffer = new_short_array(env, buffer_size);
+    if audio_buffer.is_null() {
+        error!("Failed to create audio buffer");
+        return -1;
+    }
+    let global_buffer = new_global_ref(env, audio_buffer);
+    delete_local_ref(env, audio_buffer);
+    set_decoded_audio_buffer(global_buffer);
 
     0
 }
 
-/// Audio renderer start callback
-pub unsafe extern "C" fn bridge_ar_start() {
-    let Some(mut env) = get_thread_env() else {
-        return;
-    };
-    let _ = env.call_static_method(BRIDGE_CLASS_NAME, "bridgeArStart", "()V", &[]);
-}
+pub extern "C" fn bridge_ar_start() {
+    debug!("Audio renderer start");
 
-/// Audio renderer stop callback
-pub unsafe extern "C" fn bridge_ar_stop() {
-    let Some(mut env) = get_thread_env() else {
-        return;
-    };
-    let _ = env.call_static_method(BRIDGE_CLASS_NAME, "bridgeArStop", "()V", &[]);
-}
-
-/// Audio renderer cleanup callback
-pub unsafe extern "C" fn bridge_ar_cleanup() {
-    // Destroy Rust Opus decoder
-    if let Some(opus_decoder) = OPUS_DECODER.get() {
-        opus_decoder.destroy();
-    }
-
-    // Release audio buffer
-    if let Some(buf_lock) = DECODED_AUDIO_BUFFER.get() {
-        if let Ok(mut guard) = buf_lock.lock() {
-            *guard = None;
-        }
-    }
-
-    let Some(mut env) = get_thread_env() else {
-        return;
-    };
-    let _ = env.call_static_method(BRIDGE_CLASS_NAME, "bridgeArCleanup", "()V", &[]);
-}
-
-/// Audio renderer decode and play sample callback - Using Rust Opus
-pub unsafe extern "C" fn bridge_ar_decode_and_play_sample(
-    sample_data: *mut c_char,
-    sample_length: c_int,
-) {
-    if sample_data.is_null() || sample_length <= 0 {
-        return;
-    }
-
-    let Some(mut env) = get_thread_env() else {
-        return;
-    };
-    let Some(opus_decoder) = OPUS_DECODER.get() else {
-        return;
-    };
-    let Some(buf_lock) = DECODED_AUDIO_BUFFER.get() else {
-        return;
-    };
-
-    let config = opus_decoder.get_config();
-    let output_size = (config.channel_count * config.samples_per_frame) as usize;
-
-    // Decode using Rust Opus decoder
-    let input_data = std::slice::from_raw_parts(sample_data as *const u8, sample_length as usize);
-    let mut decoded_samples = vec![0i16; output_size];
-
-    let decode_result = opus_decoder.decode(input_data, &mut decoded_samples);
-
-    let decode_len = match decode_result {
-        Ok(samples) => samples,
-        Err(e) => {
-            error!("Opus decode error: {}", e);
-            return;
-        }
-    };
-
-    if decode_len <= 0 {
-        return;
-    }
-
-    // Get the Java buffer and copy decoded data
-    let guard = match buf_lock.lock() {
-        Ok(g) => g,
-        Err(_) => return,
-    };
-
-    let buffer_ref = match guard.as_ref() {
-        Some(r) => r,
+    let env = match get_thread_env() {
+        Some(e) => e,
         None => return,
     };
 
-    let buffer: JShortArray = JShortArray::from(JObject::from_raw(buffer_ref.as_obj().as_raw()));
+    let method = get_ar_start_method();
+    if !method.is_null() {
+        call_static_void_method(env, method, &[]);
+    }
+}
 
-    // Copy decoded samples to Java array
-    let samples_to_copy = (decode_len * config.channel_count as usize).min(output_size);
-    if env
-        .set_short_array_region(&buffer, 0, &decoded_samples[..samples_to_copy])
-        .is_err()
-    {
-        error!("Failed to copy decoded audio to Java array");
+pub extern "C" fn bridge_ar_stop() {
+    debug!("Audio renderer stop");
+
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
+    };
+
+    let method = get_ar_stop_method();
+    if !method.is_null() {
+        call_static_void_method(env, method, &[]);
+    }
+}
+
+pub extern "C" fn bridge_ar_cleanup() {
+    debug!("Audio renderer cleanup");
+
+    // Destroy opus decoder
+    let decoder = OPUS_DECODER.swap(ptr::null_mut(), Ordering::SeqCst);
+    if !decoder.is_null() {
+        unsafe {
+            opus_multistream_decoder_destroy(decoder);
+        }
+    }
+
+    unsafe {
+        OPUS_CONFIG = None;
+    }
+
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
+    };
+
+    // Delete global audio buffer reference
+    let buffer = get_decoded_audio_buffer();
+    if !buffer.is_null() {
+        delete_global_ref(env, buffer);
+        set_decoded_audio_buffer(ptr::null_mut());
+    }
+
+    let method = get_ar_cleanup_method();
+    if !method.is_null() {
+        call_static_void_method(env, method, &[]);
+    }
+}
+
+pub extern "C" fn bridge_ar_decode_and_play_sample(sample_data: *mut c_char, sample_length: c_int) {
+    let decoder = OPUS_DECODER.load(Ordering::SeqCst);
+    if decoder.is_null() {
         return;
     }
 
-    drop(guard);
+    let config = unsafe {
+        match OPUS_CONFIG.as_ref() {
+            Some(c) => c,
+            None => return,
+        }
+    };
 
-    // Call Java to play the sample
-    let _ = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeArPlaySample",
-        "([S)V",
-        &[JValue::Object(&buffer)],
-    );
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
+    };
 
-    if env.exception_check().unwrap_or(false) {
-        error!("Exception in audio playback");
+    let audio_buffer = get_decoded_audio_buffer();
+    if audio_buffer.is_null() {
+        return;
+    }
+
+    // Use GetPrimitiveArrayCritical for direct access (same as original C code)
+    let decoded_data = get_primitive_array_critical(env, audio_buffer) as *mut i16;
+    if decoded_data.is_null() {
+        return;
+    }
+
+    // When sample_data is NULL (sample_length == 0), this triggers Opus packet loss
+    // concealment (PLC). The decoder will generate audio to fill the gap caused by
+    // the missing packet. This is critical for smooth audio playback.
+    let data_ptr = if sample_data.is_null() {
+        ptr::null()
+    } else {
+        sample_data as *const u8
+    };
+
+    let decode_len = unsafe {
+        opus_multistream_decode(
+            decoder,
+            data_ptr,
+            sample_length,
+            decoded_data,
+            config.samplesPerFrame,
+            0,
+        )
+    };
+
+    // Log every 100th sample for debugging
+    let count = AUDIO_SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed);
+    if count % 100 == 0 {
+        if sample_data.is_null() {
+            debug!("Audio PLC (packet loss concealment): decode_len={}, expected_samples={}",
+                   decode_len, config.samplesPerFrame);
+        } else {
+            debug!("Audio decode: sample_len={}, decode_len={}, expected_samples={}, channels={}",
+                   sample_length, decode_len, config.samplesPerFrame, config.channelCount);
+        }
+    }
+
+    if decode_len > 0 {
+        // Debug: Check first few samples to verify audio data is valid (before release)
+        if count % 500 == 0 {
+            // Sample a few values to check data validity
+            let sample_count = (decode_len * config.channelCount) as usize;
+            let samples = unsafe { std::slice::from_raw_parts(decoded_data, sample_count.min(8)) };
+            debug!("Audio samples [0..8]: {:?}", samples);
+        }
+
+        // Release the array before making JNI calls (commit changes with mode 0)
+        release_primitive_array_critical(env, audio_buffer, decoded_data as *mut c_void, 0);
+
+        let method = get_ar_play_sample_method();
+        if !method.is_null() {
+            let args = [JValue::object(audio_buffer)];
+            call_static_void_method(env, method, &args);
+            if check_exception(env) {
+                detach_current_thread();
+            }
+        }
+    } else {
+        error!("Opus decode failed: decode_len={}, sample_len={}", decode_len, sample_length);
+        // Abort - don't copy back since no valid data
+        release_primitive_array_critical(env, audio_buffer, decoded_data as *mut c_void, JNI_ABORT);
     }
 }
 
@@ -471,273 +473,302 @@ pub unsafe extern "C" fn bridge_ar_decode_and_play_sample(
 // Connection Listener Callbacks
 // ============================================================================
 
-pub unsafe extern "C" fn bridge_cl_stage_starting(stage: c_int) {
-    let Some(mut env) = get_thread_env() else {
-        return;
+pub extern "C" fn bridge_cl_stage_starting(stage: c_int) {
+    debug!("Connection stage starting: {}", stage);
+
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
     };
-    let _ = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeClStageStarting",
-        "(I)V",
-        &[JValue::Int(stage)],
-    );
+
+    let method = get_cl_stage_starting_method();
+    if !method.is_null() {
+        let args = [JValue::int(stage)];
+        call_static_void_method(env, method, &args);
+    }
 }
 
-pub unsafe extern "C" fn bridge_cl_stage_complete(stage: c_int) {
-    let Some(mut env) = get_thread_env() else {
-        return;
+pub extern "C" fn bridge_cl_stage_complete(stage: c_int) {
+    debug!("Connection stage complete: {}", stage);
+
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
     };
-    let _ = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeClStageComplete",
-        "(I)V",
-        &[JValue::Int(stage)],
-    );
+
+    let method = get_cl_stage_complete_method();
+    if !method.is_null() {
+        let args = [JValue::int(stage)];
+        call_static_void_method(env, method, &args);
+    }
 }
 
-pub unsafe extern "C" fn bridge_cl_stage_failed(stage: c_int, error_code: c_int) {
-    let Some(mut env) = get_thread_env() else {
-        return;
+pub extern "C" fn bridge_cl_stage_failed(stage: c_int, error_code: c_int) {
+    error!("Connection stage failed: stage={}, error={}", stage, error_code);
+
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
     };
-    let _ = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeClStageFailed",
-        "(II)V",
-        &[JValue::Int(stage), JValue::Int(error_code)],
-    );
+
+    let method = get_cl_stage_failed_method();
+    if !method.is_null() {
+        let args = [JValue::int(stage), JValue::int(error_code)];
+        call_static_void_method(env, method, &args);
+    }
 }
 
-pub unsafe extern "C" fn bridge_cl_connection_started() {
-    let Some(mut env) = get_thread_env() else {
-        return;
+pub extern "C" fn bridge_cl_connection_started() {
+    info!("Connection started successfully");
+
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
     };
-    let _ = env.call_static_method(BRIDGE_CLASS_NAME, "bridgeClConnectionStarted", "()V", &[]);
+
+    let method = get_cl_connection_started_method();
+    if !method.is_null() {
+        call_static_void_method(env, method, &[]);
+    }
 }
 
-pub unsafe extern "C" fn bridge_cl_connection_terminated(error_code: c_int) {
-    let Some(mut env) = get_thread_env() else {
-        return;
-    };
-    let _ = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeClConnectionTerminated",
-        "(I)V",
-        &[JValue::Int(error_code)],
-    );
-}
+pub extern "C" fn bridge_cl_connection_terminated(error_code: c_int) {
+    error!("Connection terminated: error={}", error_code);
 
-pub unsafe extern "C" fn bridge_cl_rumble(
-    controller_number: u16,
-    low_freq_motor: u16,
-    high_freq_motor: u16,
-) {
-    let Some(mut env) = get_thread_env() else {
-        return;
-    };
-    let _ = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeClRumble",
-        "(SSS)V",
-        &[
-            JValue::Short(controller_number as jshort),
-            JValue::Short(low_freq_motor as jshort),
-            JValue::Short(high_freq_motor as jshort),
-        ],
-    );
-}
-
-pub unsafe extern "C" fn bridge_cl_connection_status_update(connection_status: c_int) {
-    let Some(mut env) = get_thread_env() else {
-        return;
-    };
-    let _ = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeClConnectionStatusUpdate",
-        "(I)V",
-        &[JValue::Int(connection_status)],
-    );
-}
-
-pub unsafe extern "C" fn bridge_cl_set_hdr_mode(enabled: bool) {
-    let Some(mut env) = get_thread_env() else {
-        return;
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
     };
 
-    let hdr_metadata_array: JObject = if enabled {
-        let mut metadata = SS_HDR_METADATA {
-            displayPrimaries: [[0; 2]; 3],
-            whitePoint: [0; 2],
-            maxDisplayMasteringLuminance: 0,
-            minDisplayMasteringLuminance: 0,
-            maxContentLightLevel: 0,
-            maxFrameAverageLightLevel: 0,
-        };
-
-        if LiGetHdrMetadata(&mut metadata) {
-            let size = std::mem::size_of::<SS_HDR_METADATA>();
-            if let Ok(arr) = env.new_byte_array(size as i32) {
-                let bytes =
-                    std::slice::from_raw_parts(&metadata as *const _ as *const i8, size);
-                let _ = env.set_byte_array_region(&arr, 0, bytes);
-                arr.into()
-            } else {
-                JObject::null()
-            }
-        } else {
-            JObject::null()
+    let method = get_cl_connection_terminated_method();
+    if !method.is_null() {
+        let args = [JValue::int(error_code)];
+        call_static_void_method(env, method, &args);
+        if check_exception(env) {
+            detach_current_thread();
         }
-    } else {
-        JObject::null()
-    };
-
-    let _ = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeClSetHdrMode",
-        "(Z[B)V",
-        &[
-            JValue::Bool(enabled as jni::sys::jboolean),
-            JValue::Object(&hdr_metadata_array),
-        ],
-    );
+    }
 }
 
-pub unsafe extern "C" fn bridge_cl_rumble_triggers(
-    controller_number: u16,
-    left_trigger: u16,
-    right_trigger: u16,
+pub extern "C" fn bridge_cl_rumble(
+    controller_number: libc::c_ushort,
+    low_freq_motor: libc::c_ushort,
+    high_freq_motor: libc::c_ushort,
 ) {
-    let Some(mut env) = get_thread_env() else {
-        return;
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
     };
-    let _ = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeClRumbleTriggers",
-        "(SSS)V",
-        &[
-            JValue::Short(controller_number as jshort),
-            JValue::Short(left_trigger as jshort),
-            JValue::Short(right_trigger as jshort),
-        ],
-    );
+
+    let method = get_cl_rumble_method();
+    if !method.is_null() {
+        // The seemingly redundant short casts are required to convert unsigned short to signed short
+        let args = [
+            JValue::short(controller_number as i16),
+            JValue::short(low_freq_motor as i16),
+            JValue::short(high_freq_motor as i16),
+        ];
+        call_static_void_method(env, method, &args);
+        if check_exception(env) {
+            detach_current_thread();
+        }
+    }
 }
 
-pub unsafe extern "C" fn bridge_cl_set_motion_event_state(
-    controller_number: u16,
-    motion_type: u8,
-    report_rate_hz: u16,
-) {
-    let Some(mut env) = get_thread_env() else {
-        return;
+pub extern "C" fn bridge_cl_connection_status_update(connection_status: c_int) {
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
     };
-    let _ = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeClSetMotionEventState",
-        "(SBS)V",
-        &[
-            JValue::Short(controller_number as jshort),
-            JValue::Byte(motion_type as jbyte),
-            JValue::Short(report_rate_hz as jshort),
-        ],
-    );
+
+    let method = get_cl_connection_status_update_method();
+    if !method.is_null() {
+        let args = [JValue::int(connection_status)];
+        call_static_void_method(env, method, &args);
+        if check_exception(env) {
+            detach_current_thread();
+        }
+    }
 }
 
-pub unsafe extern "C" fn bridge_cl_set_controller_led(controller_number: u16, r: u8, g: u8, b: u8) {
-    let Some(mut env) = get_thread_env() else {
-        return;
+pub extern "C" fn bridge_cl_set_hdr_mode(enabled: bool) {
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
     };
-    let _ = env.call_static_method(
-        BRIDGE_CLASS_NAME,
-        "bridgeClSetControllerLED",
-        "(SBBB)V",
-        &[
-            JValue::Short(controller_number as jshort),
-            JValue::Byte(r as jbyte),
-            JValue::Byte(g as jbyte),
-            JValue::Byte(b as jbyte),
-        ],
-    );
-}
 
-// ============================================================================
-// Callback Structures for moonlight-common-c
-// ============================================================================
-
-// Static callback structures that persist for the lifetime of the connection
-// These MUST be static because moonlight-common-c keeps references to them
-
-// Static callbacks - use Box::leak to create 'static references
-static VIDEO_CALLBACKS: OnceCell<&'static DECODER_RENDERER_CALLBACKS> = OnceCell::new();
-static AUDIO_CALLBACKS: OnceCell<&'static AUDIO_RENDERER_CALLBACKS> = OnceCell::new();
-static CONNECTION_CALLBACKS: OnceCell<&'static CONNECTION_LISTENER_CALLBACKS> = OnceCell::new();
-
-/// Initialize and get video renderer callbacks structure
-pub fn create_video_callbacks(capabilities: c_int) -> &'static DECODER_RENDERER_CALLBACKS {
-    info!("create_video_callbacks: capabilities={}", capabilities);
-
-    VIDEO_CALLBACKS.get_or_init(|| {
-        info!("create_video_callbacks: Creating new callback structure");
-        Box::leak(Box::new(DECODER_RENDERER_CALLBACKS {
-            setup: Some(bridge_dr_setup),
-            start: Some(bridge_dr_start),
-            stop: Some(bridge_dr_stop),
-            cleanup: Some(bridge_dr_cleanup),
-            submitDecodeUnit: Some(bridge_dr_submit_decode_unit),
-            capabilities: 0,
-        }))
-    });
-
-    // Update capabilities in the leaked structure
-    // This is safe because we're the only writer and moonlight-common-c reads synchronously
-    let cb = *VIDEO_CALLBACKS.get().unwrap();
-    let cb_mut = cb as *const DECODER_RENDERER_CALLBACKS as *mut DECODER_RENDERER_CALLBACKS;
-    unsafe {
-        (*cb_mut).capabilities = capabilities;
+    let method = get_cl_set_hdr_mode_method();
+    if method.is_null() {
+        return;
     }
 
-    info!("create_video_callbacks: Returning callbacks at {:p}", cb);
-    cb
+    // Check if HDR metadata was provided
+    let hdr_metadata_array: JByteArray = if enabled {
+        let mut hdr_metadata = SS_HDR_METADATA::default();
+        let has_metadata = unsafe { LiGetHdrMetadata(&mut hdr_metadata) };
+
+        if has_metadata {
+            let metadata_size = std::mem::size_of::<SS_HDR_METADATA>() as i32;
+            let array = new_byte_array(env, metadata_size);
+            if !array.is_null() {
+                set_byte_array_region(
+                    env,
+                    array,
+                    0,
+                    metadata_size,
+                    &hdr_metadata as *const _ as *const i8,
+                );
+                array
+            } else {
+                ptr::null_mut()
+            }
+        } else {
+            ptr::null_mut()
+        }
+    } else {
+        ptr::null_mut()
+    };
+
+    let args = [
+        JValue::boolean(enabled),
+        JValue::object(hdr_metadata_array),
+    ];
+    call_static_void_method(env, method, &args);
+
+    // Clean up local reference
+    if !hdr_metadata_array.is_null() {
+        delete_local_ref(env, hdr_metadata_array);
+    }
+
+    if check_exception(env) {
+        detach_current_thread();
+    }
 }
 
-/// Get audio renderer callbacks structure (static lifetime)
-pub fn create_audio_callbacks() -> &'static AUDIO_RENDERER_CALLBACKS {
-    info!("create_audio_callbacks: Creating audio callbacks");
-    let result = AUDIO_CALLBACKS.get_or_init(|| {
-        info!("create_audio_callbacks: Creating new callback structure");
-        Box::leak(Box::new(AUDIO_RENDERER_CALLBACKS {
-            init: Some(bridge_ar_init),
-            start: Some(bridge_ar_start),
-            stop: Some(bridge_ar_stop),
-            cleanup: Some(bridge_ar_cleanup),
-            decodeAndPlaySample: Some(bridge_ar_decode_and_play_sample),
-            capabilities: CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION,
-        }))
-    });
-    info!("create_audio_callbacks: Returning callbacks at {:p}", result);
-    result
+pub extern "C" fn bridge_cl_rumble_triggers(
+    controller_number: libc::c_ushort,
+    left_trigger: libc::c_ushort,
+    right_trigger: libc::c_ushort,
+) {
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
+    };
+
+    let method = get_cl_rumble_triggers_method();
+    if !method.is_null() {
+        let args = [
+            JValue::short(controller_number as i16),
+            JValue::short(left_trigger as i16),
+            JValue::short(right_trigger as i16),
+        ];
+        call_static_void_method(env, method, &args);
+        if check_exception(env) {
+            detach_current_thread();
+        }
+    }
 }
 
-/// Get connection listener callbacks structure (static lifetime)
-pub fn create_connection_callbacks() -> &'static CONNECTION_LISTENER_CALLBACKS {
-    info!("create_connection_callbacks: Creating connection callbacks");
-    let result = CONNECTION_CALLBACKS.get_or_init(|| {
-        info!("create_connection_callbacks: Creating new callback structure");
-        Box::leak(Box::new(CONNECTION_LISTENER_CALLBACKS {
-            stageStarting: Some(bridge_cl_stage_starting),
-            stageComplete: Some(bridge_cl_stage_complete),
-            stageFailed: Some(bridge_cl_stage_failed),
-            connectionStarted: Some(bridge_cl_connection_started),
-            connectionTerminated: Some(bridge_cl_connection_terminated),
-            logMessage: None, // Varargs not supported in stable Rust
-            rumble: Some(bridge_cl_rumble),
-            connectionStatusUpdate: Some(bridge_cl_connection_status_update),
-            setHdrMode: Some(bridge_cl_set_hdr_mode),
-            rumbleTriggers: Some(bridge_cl_rumble_triggers),
-            setMotionEventState: Some(bridge_cl_set_motion_event_state),
-            setControllerLED: Some(bridge_cl_set_controller_led),
-            setAdaptiveTriggers: None, // Not currently implemented
-        }))
-    });
-    info!("create_connection_callbacks: Returning callbacks at {:p}", result);
-    result
+pub extern "C" fn bridge_cl_set_motion_event_state(
+    controller_number: libc::c_ushort,
+    motion_type: libc::c_uchar,
+    report_rate_hz: libc::c_ushort,
+) {
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
+    };
+
+    let method = get_cl_set_motion_event_state_method();
+    if !method.is_null() {
+        let args = [
+            JValue::short(controller_number as i16),
+            JValue::byte(motion_type as i8),
+            JValue::short(report_rate_hz as i16),
+        ];
+        call_static_void_method(env, method, &args);
+        if check_exception(env) {
+            detach_current_thread();
+        }
+    }
 }
 
+pub extern "C" fn bridge_cl_set_controller_led(
+    controller_number: libc::c_ushort,
+    r: libc::c_uchar,
+    g: libc::c_uchar,
+    b: libc::c_uchar,
+) {
+    let env = match get_thread_env() {
+        Some(e) => e,
+        None => return,
+    };
+
+    let method = get_cl_set_controller_led_method();
+    if !method.is_null() {
+        // These jbyte casts are necessary to satisfy CheckJNI
+        let args = [
+            JValue::short(controller_number as i16),
+            JValue::byte(r as i8),
+            JValue::byte(g as i8),
+            JValue::byte(b as i8),
+        ];
+        call_static_void_method(env, method, &args);
+        if check_exception(env) {
+            detach_current_thread();
+        }
+    }
+}
+
+// ============================================================================
+// Static Callback Structures
+// ============================================================================
+
+pub static VIDEO_CALLBACKS: DECODER_RENDERER_CALLBACKS = DECODER_RENDERER_CALLBACKS {
+    setup: Some(bridge_dr_setup),
+    start: Some(bridge_dr_start),
+    stop: Some(bridge_dr_stop),
+    cleanup: Some(bridge_dr_cleanup),
+    submitDecodeUnit: Some(bridge_dr_submit_decode_unit),
+    capabilities: 0, // Will be set at runtime
+};
+
+pub static AUDIO_CALLBACKS: AUDIO_RENDERER_CALLBACKS = AUDIO_RENDERER_CALLBACKS {
+    init: Some(bridge_ar_init),
+    start: Some(bridge_ar_start),
+    stop: Some(bridge_ar_stop),
+    cleanup: Some(bridge_ar_cleanup),
+    decodeAndPlaySample: Some(bridge_ar_decode_and_play_sample),
+    capabilities: CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION,
+};
+
+pub static CONNECTION_CALLBACKS: CONNECTION_LISTENER_CALLBACKS = CONNECTION_LISTENER_CALLBACKS {
+    stageStarting: Some(bridge_cl_stage_starting),
+    stageComplete: Some(bridge_cl_stage_complete),
+    stageFailed: Some(bridge_cl_stage_failed),
+    connectionStarted: Some(bridge_cl_connection_started),
+    connectionTerminated: Some(bridge_cl_connection_terminated),
+    logMessage: None, // C variadic functions not supported in stable Rust
+    rumble: Some(bridge_cl_rumble),
+    connectionStatusUpdate: Some(bridge_cl_connection_status_update),
+    setHdrMode: Some(bridge_cl_set_hdr_mode),
+    rumbleTriggers: Some(bridge_cl_rumble_triggers),
+    setMotionEventState: Some(bridge_cl_set_motion_event_state),
+    setControllerLED: Some(bridge_cl_set_controller_led),
+    setAdaptiveTriggers: None, // Not implemented yet
+};
+
+/// Check if platform has fast AES support
+/// This is a simplified version - on aarch64 we assume hardware AES is available
+pub fn has_fast_aes() -> bool {
+    // On arm64-v8a (aarch64), most modern devices have hardware AES
+    // This is a conservative implementation that returns true for arm64
+    #[cfg(target_arch = "aarch64")]
+    {
+        true
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        false
+    }
+}

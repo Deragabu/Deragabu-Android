@@ -1,65 +1,92 @@
-//! FFI bindings to moonlight-common-c (Limelight) and Opus
+//! FFI bindings to moonlight-common-c library
 //!
-//! This module contains auto-generated bindings from bindgen,
-//! as well as manually defined types and functions.
+//! This module contains raw FFI declarations for the moonlight-common-c C library.
 
-// Include auto-generated bindings
-// include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
+use libc::{c_char, c_int, c_short, c_uchar, c_uint, c_ushort, c_void, size_t};
 
-// For now, we'll define the bindings manually until bindgen is properly set up
-use libc::{c_char, c_int, c_short, c_uchar, c_uint, c_ushort, c_void};
-
-// Stream configuration constants
-pub const STREAM_CFG_LOCAL: c_int = 0;
-pub const STREAM_CFG_REMOTE: c_int = 1;
-pub const STREAM_CFG_AUTO: c_int = 2;
-
-// Colorspace constants
-pub const COLORSPACE_REC_601: c_int = 0;
-pub const COLORSPACE_REC_709: c_int = 1;
-pub const COLORSPACE_REC_2020: c_int = 2;
-
-// Color range constants
-pub const COLOR_RANGE_LIMITED: c_int = 0;
-pub const COLOR_RANGE_FULL: c_int = 1;
-
-// Encryption flags
-pub const ENCFLG_NONE: c_int = 0x00000000;
-pub const ENCFLG_AUDIO: c_int = 0x00000001;
-pub const ENCFLG_VIDEO: c_int = 0x00000002;
-pub const ENCFLG_ALL: c_int = -1; // 0xFFFFFFFF as signed int
-
-// Buffer types
-pub const BUFFER_TYPE_PICDATA: c_int = 0x00;
-pub const BUFFER_TYPE_SPS: c_int = 0x01;
-pub const BUFFER_TYPE_PPS: c_int = 0x02;
-pub const BUFFER_TYPE_VPS: c_int = 0x03;
+// Buffer types for decode units
+pub const BUFFER_TYPE_PICDATA: c_int = 0;
+pub const BUFFER_TYPE_SPS: c_int = 1;
+pub const BUFFER_TYPE_PPS: c_int = 2;
+pub const BUFFER_TYPE_VPS: c_int = 3;
 
 // Frame types
-pub const FRAME_TYPE_PFRAME: c_int = 0x00;
-pub const FRAME_TYPE_IDR: c_int = 0x01;
+pub const FRAME_TYPE_PFRAME: c_int = 0;
+pub const FRAME_TYPE_IDR: c_int = 1;
 
-// Decoder renderer return codes
+// Decoder return codes
 pub const DR_OK: c_int = 0;
-pub const DR_NEED_IDR: c_int = -1;
 
-// Controller types (from Limelight.h)
-pub const LI_CTYPE_UNKNOWN: i8 = 0x00;
-pub const LI_CTYPE_XBOX: i8 = 0x01;
-pub const LI_CTYPE_PS: i8 = 0x02;
-pub const LI_CTYPE_NINTENDO: i8 = 0x03;
+// Connection status codes
+pub const CONN_STATUS_OKAY: c_int = 0;
+pub const CONN_STATUS_POOR: c_int = 1;
 
-// Capability flags
-pub const CAPABILITY_DIRECT_SUBMIT: c_int = 0x1;
-pub const CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC: c_int = 0x2;
-pub const CAPABILITY_REFERENCE_FRAME_INVALIDATION_HEVC: c_int = 0x4;
-pub const CAPABILITY_SLOW_OPUS_DECODER: c_int = 0x8;
+// Encryption flags
+pub const ENCFLG_NONE: c_int = 0x00;
+pub const ENCFLG_AUDIO: c_int = 0x01;
+pub const ENCFLG_VIDEO: c_int = 0x02;
+pub const ENCFLG_RI: c_int = 0x04;
+pub const ENCFLG_CONTROL: c_int = 0x08;
+pub const ENCFLG_ALL: c_int = ENCFLG_AUDIO | ENCFLG_VIDEO | ENCFLG_RI | ENCFLG_CONTROL;
+
+// Controller types
+pub const LI_CTYPE_UNKNOWN: c_int = 0x00;
+pub const LI_CTYPE_XBOX: c_int = 0x01;
+pub const LI_CTYPE_PS: c_int = 0x02;
+pub const LI_CTYPE_NINTENDO: c_int = 0x03;
+
+/// Capability flags for audio renderer
 pub const CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION: c_int = 0x10;
-pub const CAPABILITY_PULL_RENDERER: c_int = 0x20;
-pub const CAPABILITY_REFERENCE_FRAME_INVALIDATION_AV1: c_int = 0x40;
 
+/// Linked list entry for decode unit buffer
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+pub struct LENTRY {
+    pub next: *mut LENTRY,
+    pub data: *mut c_char,
+    pub length: c_int,
+    pub bufferType: c_int,
+}
+
+/// Decode unit structure
+#[repr(C)]
+pub struct DECODE_UNIT {
+    pub frameNumber: c_int,
+    pub frameType: c_int,
+    pub frameHostProcessingLatency: c_ushort,
+    pub receiveTimeUs: u64,
+    pub enqueueTimeUs: u64,
+    pub presentationTimeUs: u64,
+    pub rtpTimestamp: c_uint,
+    pub fullLength: c_int,
+    pub bufferList: *mut LENTRY,
+    pub hdrActive: bool,
+    pub colorspace: c_uchar,
+}
+
+/// Opus multistream configuration
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct OPUS_MULTISTREAM_CONFIGURATION {
+    pub sampleRate: c_int,
+    pub channelCount: c_int,
+    pub streams: c_int,
+    pub coupledStreams: c_int,
+    pub samplesPerFrame: c_int,
+    pub mapping: [c_uchar; 8],
+}
+
+/// Server information structure
+#[repr(C)]
+pub struct SERVER_INFORMATION {
+    pub address: *const c_char,
+    pub serverInfoAppVersion: *const c_char,
+    pub serverInfoGfeVersion: *const c_char,
+    pub rtspSessionUrl: *const c_char,
+    pub serverCodecModeSupport: c_int,
+}
+
+/// Stream configuration structure
+#[repr(C)]
 pub struct STREAM_CONFIGURATION {
     pub width: c_int,
     pub height: c_int,
@@ -73,210 +100,126 @@ pub struct STREAM_CONFIGURATION {
     pub colorSpace: c_int,
     pub colorRange: c_int,
     pub encryptionFlags: c_int,
-    pub remoteInputAesKey: [u8; 16],
-    pub remoteInputAesIv: [u8; 16],
+    pub remoteInputAesKey: [c_uchar; 16],
+    pub remoteInputAesIv: [c_uchar; 16],
 }
 
+/// HDR display primary coordinate
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct SERVER_INFORMATION {
-    pub address: *const c_char,
-    pub serverInfoAppVersion: *const c_char,
-    pub serverInfoGfeVersion: *const c_char,
-    pub rtspSessionUrl: *const c_char,
-    pub serverCodecModeSupport: c_int,
+#[derive(Clone, Copy, Default)]
+pub struct SS_HDR_DISPLAY_PRIMARY {
+    pub x: c_ushort,
+    pub y: c_ushort,
 }
 
+/// HDR metadata structure
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct LENTRY {
-    pub next: *mut LENTRY,
-    pub data: *mut c_char,
-    pub length: c_int,
-    pub bufferType: c_int,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct DECODE_UNIT {
-    pub frameNumber: c_int,
-    pub frameType: c_int,
-    pub frameHostProcessingLatency: u16,
-    pub receiveTimeUs: u64,
-    pub enqueueTimeUs: u64,
-    pub presentationTimeUs: u64,
-    pub rtpTimestamp: u32,
-    pub fullLength: c_int,
-    pub bufferList: *mut LENTRY,
-    pub hdrActive: bool,
-    pub colorspace: u8,
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct OPUS_MULTISTREAM_CONFIGURATION {
-    pub sampleRate: c_int,
-    pub channelCount: c_int,
-    pub streams: c_int,
-    pub coupledStreams: c_int,
-    pub samplesPerFrame: c_int,
-    pub mapping: [c_uchar; 8],
-}
-
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy)]
 pub struct SS_HDR_METADATA {
-    pub displayPrimaries: [[u16; 2]; 3],
-    pub whitePoint: [u16; 2],
-    pub maxDisplayMasteringLuminance: u16,
-    pub minDisplayMasteringLuminance: u16,
-    pub maxContentLightLevel: u16,
-    pub maxFrameAverageLightLevel: u16,
+    pub displayPrimaries: [SS_HDR_DISPLAY_PRIMARY; 3],
+    pub whitePoint: SS_HDR_DISPLAY_PRIMARY,
+    pub maxDisplayLuminance: c_ushort,
+    pub minDisplayLuminance: c_ushort,
+    pub maxContentLightLevel: c_ushort,
+    pub maxFrameAverageLightLevel: c_ushort,
+    pub maxFullFrameLuminance: c_ushort,
 }
 
-// Callback function types
-pub type DecoderRendererSetup = Option<
-    unsafe extern "C" fn(
-        videoFormat: c_int,
-        width: c_int,
-        height: c_int,
-        redrawRate: c_int,
-        context: *mut c_void,
-        drFlags: c_int,
-    ) -> c_int,
->;
+impl Default for SS_HDR_METADATA {
+    fn default() -> Self {
+        Self {
+            displayPrimaries: [SS_HDR_DISPLAY_PRIMARY::default(); 3],
+            whitePoint: SS_HDR_DISPLAY_PRIMARY::default(),
+            maxDisplayLuminance: 0,
+            minDisplayLuminance: 0,
+            maxContentLightLevel: 0,
+            maxFrameAverageLightLevel: 0,
+            maxFullFrameLuminance: 0,
+        }
+    }
+}
 
-pub type DecoderRendererStart = Option<unsafe extern "C" fn()>;
-pub type DecoderRendererStop = Option<unsafe extern "C" fn()>;
-pub type DecoderRendererCleanup = Option<unsafe extern "C" fn()>;
-pub type DecoderRendererSubmitDecodeUnit =
-    Option<unsafe extern "C" fn(decodeUnit: *mut DECODE_UNIT) -> c_int>;
-
+/// Video decoder callbacks
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy)]
 pub struct DECODER_RENDERER_CALLBACKS {
-    pub setup: DecoderRendererSetup,
-    pub start: DecoderRendererStart,
-    pub stop: DecoderRendererStop,
-    pub cleanup: DecoderRendererCleanup,
-    pub submitDecodeUnit: DecoderRendererSubmitDecodeUnit,
+    pub setup: Option<
+        extern "C" fn(
+            videoFormat: c_int,
+            width: c_int,
+            height: c_int,
+            redrawRate: c_int,
+            context: *mut c_void,
+            drFlags: c_int,
+        ) -> c_int,
+    >,
+    pub start: Option<extern "C" fn()>,
+    pub stop: Option<extern "C" fn()>,
+    pub cleanup: Option<extern "C" fn()>,
+    pub submitDecodeUnit: Option<extern "C" fn(decodeUnit: *mut DECODE_UNIT) -> c_int>,
     pub capabilities: c_int,
 }
 
-pub type AudioRendererInit = Option<
-    unsafe extern "C" fn(
-        audioConfiguration: c_int,
-        opusConfig: *const OPUS_MULTISTREAM_CONFIGURATION,
-        context: *mut c_void,
-        arFlags: c_int,
-    ) -> c_int,
->;
-
-pub type AudioRendererStart = Option<unsafe extern "C" fn()>;
-pub type AudioRendererStop = Option<unsafe extern "C" fn()>;
-pub type AudioRendererCleanup = Option<unsafe extern "C" fn()>;
-pub type AudioRendererDecodeAndPlaySample =
-    Option<unsafe extern "C" fn(sampleData: *mut c_char, sampleLength: c_int)>;
-
+/// Audio renderer callbacks
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy)]
 pub struct AUDIO_RENDERER_CALLBACKS {
-    pub init: AudioRendererInit,
-    pub start: AudioRendererStart,
-    pub stop: AudioRendererStop,
-    pub cleanup: AudioRendererCleanup,
-    pub decodeAndPlaySample: AudioRendererDecodeAndPlaySample,
+    pub init: Option<
+        extern "C" fn(
+            audioConfiguration: c_int,
+            opusConfig: *const OPUS_MULTISTREAM_CONFIGURATION,
+            context: *mut c_void,
+            flags: c_int,
+        ) -> c_int,
+    >,
+    pub start: Option<extern "C" fn()>,
+    pub stop: Option<extern "C" fn()>,
+    pub cleanup: Option<extern "C" fn()>,
+    pub decodeAndPlaySample:
+        Option<extern "C" fn(sampleData: *mut c_char, sampleLength: c_int)>,
     pub capabilities: c_int,
 }
 
-pub type ConnListenerStageStarting = Option<unsafe extern "C" fn(stage: c_int)>;
-pub type ConnListenerStageComplete = Option<unsafe extern "C" fn(stage: c_int)>;
-pub type ConnListenerStageFailed = Option<unsafe extern "C" fn(stage: c_int, errorCode: c_int)>;
-pub type ConnListenerConnectionStarted = Option<unsafe extern "C" fn()>;
-pub type ConnListenerConnectionTerminated = Option<unsafe extern "C" fn(errorCode: c_int)>;
-pub type ConnListenerLogMessage = Option<unsafe extern "C" fn(format: *const c_char, ...)>;
-pub type ConnListenerRumble = Option<
-    unsafe extern "C" fn(controllerNumber: c_ushort, lowFreqMotor: c_ushort, highFreqMotor: c_ushort),
->;
-pub type ConnListenerConnectionStatusUpdate = Option<unsafe extern "C" fn(connectionStatus: c_int)>;
-pub type ConnListenerSetHdrMode = Option<unsafe extern "C" fn(enabled: bool)>;
-pub type ConnListenerRumbleTriggers = Option<
-    unsafe extern "C" fn(controllerNumber: c_ushort, leftTrigger: c_ushort, rightTrigger: c_ushort),
->;
-pub type ConnListenerSetMotionEventState = Option<
-    unsafe extern "C" fn(controllerNumber: u16, motionType: u8, reportRateHz: u16),
->;
-pub type ConnListenerSetControllerLED = Option<
-    unsafe extern "C" fn(controllerNumber: u16, r: u8, g: u8, b: u8),
->;
-
-// DS effect constants for adaptive triggers
-pub const DS_EFFECT_PAYLOAD_SIZE: usize = 10;
-pub const DS_EFFECT_RIGHT_TRIGGER: u8 = 0x04;
-pub const DS_EFFECT_LEFT_TRIGGER: u8 = 0x08;
-
-pub type ConnListenerSetAdaptiveTriggers = Option<
-    unsafe extern "C" fn(
-        controllerNumber: u16,
-        eventFlags: u8,
-        typeLeft: u8,
-        typeRight: u8,
-        left: *mut u8,
-        right: *mut u8,
-    ),
->;
-
+/// Connection listener callbacks
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy)]
 pub struct CONNECTION_LISTENER_CALLBACKS {
-    pub stageStarting: ConnListenerStageStarting,
-    pub stageComplete: ConnListenerStageComplete,
-    pub stageFailed: ConnListenerStageFailed,
-    pub connectionStarted: ConnListenerConnectionStarted,
-    pub connectionTerminated: ConnListenerConnectionTerminated,
-    pub logMessage: ConnListenerLogMessage,
-    pub rumble: ConnListenerRumble,
-    pub connectionStatusUpdate: ConnListenerConnectionStatusUpdate,
-    pub setHdrMode: ConnListenerSetHdrMode,
-    pub rumbleTriggers: ConnListenerRumbleTriggers,
-    pub setMotionEventState: ConnListenerSetMotionEventState,
-    pub setControllerLED: ConnListenerSetControllerLED,
-    pub setAdaptiveTriggers: ConnListenerSetAdaptiveTriggers,
+    pub stageStarting: Option<extern "C" fn(stage: c_int)>,
+    pub stageComplete: Option<extern "C" fn(stage: c_int)>,
+    pub stageFailed: Option<extern "C" fn(stage: c_int, errorCode: c_int)>,
+    pub connectionStarted: Option<extern "C" fn()>,
+    pub connectionTerminated: Option<extern "C" fn(errorCode: c_int)>,
+    pub logMessage: Option<unsafe extern "C" fn(format: *const c_char, ...)>,
+    pub rumble: Option<extern "C" fn(controllerNumber: c_ushort, lowFreqMotor: c_ushort, highFreqMotor: c_ushort)>,
+    pub connectionStatusUpdate: Option<extern "C" fn(connectionStatus: c_int)>,
+    pub setHdrMode: Option<extern "C" fn(enabled: bool)>,
+    pub rumbleTriggers: Option<extern "C" fn(controllerNumber: c_ushort, leftTrigger: c_ushort, rightTrigger: c_ushort)>,
+    pub setMotionEventState: Option<extern "C" fn(controllerNumber: c_ushort, motionType: c_uchar, reportRateHz: c_ushort)>,
+    pub setControllerLED: Option<extern "C" fn(controllerNumber: c_ushort, r: c_uchar, g: c_uchar, b: c_uchar)>,
+    pub setAdaptiveTriggers: Option<extern "C" fn(controllerNumber: c_ushort, eventFlags: c_uchar, typeLeft: c_uchar, typeRight: c_uchar, left: *mut c_uchar, right: *mut c_uchar)>,
 }
 
-// Opus decoder - now using Rust implementation via audiopus crate
-// See src/opus.rs for the Rust Opus wrapper
-
-// External functions from moonlight-common-c
+// External C functions from moonlight-common-c
+#[link(name = "moonlight-common-c")]
 extern "C" {
     // Input functions
     pub fn LiSendMouseMoveEvent(deltaX: c_short, deltaY: c_short);
-    pub fn LiSendMousePositionEvent(
-        x: c_short,
-        y: c_short,
-        referenceWidth: c_short,
-        referenceHeight: c_short,
-    );
-    pub fn LiSendMouseMoveAsMousePositionEvent(
-        deltaX: c_short,
-        deltaY: c_short,
-        referenceWidth: c_short,
-        referenceHeight: c_short,
-    );
-    pub fn LiSendMouseButtonEvent(buttonEvent: c_char, mouseButton: c_char);
+    pub fn LiSendMousePositionEvent(x: c_short, y: c_short, referenceWidth: c_short, referenceHeight: c_short);
+    pub fn LiSendMouseMoveAsMousePositionEvent(deltaX: c_short, deltaY: c_short, referenceWidth: c_short, referenceHeight: c_short);
+    pub fn LiSendMouseButtonEvent(buttonEvent: c_uchar, mouseButton: c_uchar);
     pub fn LiSendMultiControllerEvent(
         controllerNumber: c_short,
         activeGamepadMask: c_short,
         buttonFlags: c_int,
-        leftTrigger: c_char,
-        rightTrigger: c_char,
+        leftTrigger: c_uchar,
+        rightTrigger: c_uchar,
         leftStickX: c_short,
         leftStickY: c_short,
         rightStickX: c_short,
         rightStickY: c_short,
     );
     pub fn LiSendTouchEvent(
-        eventType: c_char,
+        eventType: c_uchar,
         pointerId: c_int,
         x: f32,
         y: f32,
@@ -286,76 +229,78 @@ extern "C" {
         rotation: c_short,
     ) -> c_int;
     pub fn LiSendPenEvent(
-        eventType: c_char,
-        toolType: c_char,
-        penButtons: c_char,
+        eventType: c_uchar,
+        toolType: c_uchar,
+        penButtons: c_uchar,
         x: f32,
         y: f32,
         pressureOrDistance: f32,
         contactAreaMajor: f32,
         contactAreaMinor: f32,
         rotation: c_short,
-        tilt: c_char,
+        tilt: c_uchar,
     ) -> c_int;
     pub fn LiSendControllerArrivalEvent(
-        controllerNumber: c_char,
+        controllerNumber: c_uchar,
         activeGamepadMask: c_short,
-        controllerType: c_char,
+        controllerType: c_uchar,
         supportedButtonFlags: c_int,
         capabilities: c_short,
     ) -> c_int;
     pub fn LiSendControllerTouchEvent(
-        controllerNumber: c_char,
-        eventType: c_char,
+        controllerNumber: c_uchar,
+        eventType: c_uchar,
         pointerId: c_int,
         x: f32,
         y: f32,
         pressure: f32,
     ) -> c_int;
     pub fn LiSendControllerMotionEvent(
-        controllerNumber: c_char,
-        motionType: c_char,
+        controllerNumber: c_uchar,
+        motionType: c_uchar,
         x: f32,
         y: f32,
         z: f32,
     ) -> c_int;
     pub fn LiSendControllerBatteryEvent(
-        controllerNumber: c_char,
-        batteryState: c_char,
-        batteryPercentage: c_char,
+        controllerNumber: c_uchar,
+        batteryState: c_uchar,
+        batteryPercentage: c_uchar,
     ) -> c_int;
     pub fn LiSendKeyboardEvent2(
         keyCode: c_short,
-        keyAction: c_char,
-        modifiers: c_char,
-        flags: c_char,
+        keyAction: c_uchar,
+        modifiers: c_uchar,
+        flags: c_uchar,
     );
     pub fn LiSendHighResScrollEvent(scrollAmount: c_short);
     pub fn LiSendHighResHScrollEvent(scrollAmount: c_short);
-    pub fn LiSendUtf8TextEvent(text: *const c_char, length: c_uint);
+    pub fn LiSendUtf8TextEvent(text: *const c_char, length: size_t);
 
     // Connection functions
+    pub fn LiStopConnection();
+    pub fn LiInterruptConnection();
     pub fn LiStartConnection(
         serverInfo: *const SERVER_INFORMATION,
         streamConfig: *const STREAM_CONFIGURATION,
-        clCallbacks: *const CONNECTION_LISTENER_CALLBACKS,
-        drCallbacks: *const DECODER_RENDERER_CALLBACKS,
-        arCallbacks: *const AUDIO_RENDERER_CALLBACKS,
-        platformInfo: *mut c_void,
+        connCallbacks: *const CONNECTION_LISTENER_CALLBACKS,
+        videoCallbacks: *const DECODER_RENDERER_CALLBACKS,
+        audioCallbacks: *const AUDIO_RENDERER_CALLBACKS,
+        platformInfo: *const c_void,
         platformInfoSize: c_int,
-        videoInfo: *mut c_void,
-        videoInfoSize: c_int,
+        videoContext: *const c_void,
+        videoContextSize: c_int,
     ) -> c_int;
-    pub fn LiStopConnection();
-    pub fn LiInterruptConnection();
-    pub fn LiGetStageName(stage: c_int) -> *const c_char;
 
-    // Network utilities
+    // Info functions
+    pub fn LiGetStageName(stage: c_int) -> *const c_char;
     pub fn LiFindExternalAddressIP4(
         stunHostName: *const c_char,
         stunPort: c_int,
         wanAddr: *mut c_uint,
     ) -> c_int;
+    pub fn LiGetPendingAudioDuration() -> c_int;
+    pub fn LiGetPendingVideoFrames() -> c_int;
     pub fn LiTestClientConnectivity(
         testServerHostName: *const c_char,
         referencePort: c_ushort,
@@ -367,13 +312,9 @@ extern "C" {
         portFlags: c_int,
         separator: *const c_char,
         outputBuffer: *mut c_char,
-        outputBufferSize: c_int,
+        outputBufferSize: size_t,
     );
-
-    // Status functions
-    pub fn LiGetPendingAudioDuration() -> c_int;
-    pub fn LiGetPendingVideoFrames() -> c_int;
-    pub fn LiGetEstimatedRttInfo(rtt: *mut u32, variance: *mut u32) -> bool;
+    pub fn LiGetEstimatedRttInfo(rtt: *mut c_uint, variance: *mut c_uint) -> bool;
     pub fn LiGetLaunchUrlQueryParameters() -> *const c_char;
     pub fn LiGetHdrMetadata(hdrMetadata: *mut SS_HDR_METADATA) -> bool;
 }

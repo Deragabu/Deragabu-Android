@@ -45,3 +45,4 @@ app/.externalNativeBuild/
 
 # Auto-downloaded source code
 /app/src/main/jni/moonlight-core-rs/target/
+/moonlight-core/
