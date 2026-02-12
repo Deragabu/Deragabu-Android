@@ -22,9 +22,15 @@ public class AndroidAudioRenderer implements AudioRenderer {
     private AudioTrack track;
 
     // Audio latency control constants
-    private static final int MAX_PENDING_AUDIO_MS = 100;  // Maximum pending audio before dropping
-    private static final int TARGET_PENDING_AUDIO_MS = 60; // Target latency for recovery
+    private static final int MAX_PENDING_AUDIO_MS = 120;  // Maximum pending audio before dropping
+    private static final int TARGET_PENDING_AUDIO_MS = 80; // Target latency for recovery
+    private static final int MIN_BUFFER_MS = 20;           // Minimum buffer to maintain
     private int consecutiveDrops = 0;
+
+    // Fade parameters for smooth audio transitions (reduces pops/clicks)
+    private static final int FADE_SAMPLES = 64;  // Number of samples for fade in/out
+    private boolean needsFadeIn = false;
+    private short[] lastAudioFrame = null;
 
     public AndroidAudioRenderer(Context context, boolean enableAudioFx) {
         this.context = context;
@@ -89,25 +95,29 @@ public class AndroidAudioRenderer implements AudioRenderer {
         // buffer size for our buffer, but it appears that we can
         // do this on many devices and it lowers audio latency.
         // We'll try the small buffer size first and if it fails,
-        // use the recommended larger buffer size.
+        // use progressively larger buffer sizes.
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 6; i++) {
             boolean lowLatency;
             int bufferSize;
 
             // We will try:
-            // 1) Small buffer, low latency mode
-            // 2) Large buffer, low latency mode
-            // 3) Small buffer, standard mode
-            // 4) Large buffer, standard mode
+            // 1) Small buffer (2 frames), low latency mode
+            // 2) Medium buffer (4 frames), low latency mode
+            // 3) Large buffer (min buffer), low latency mode
+            // 4) Small buffer (2 frames), standard mode
+            // 5) Medium buffer (4 frames), standard mode
+            // 6) Large buffer (min buffer), standard mode
 
             switch (i) {
                 case 0:
                 case 1:
+                case 2:
                     lowLatency = true;
                     break;
-                case 2:
                 case 3:
+                case 4:
+                case 5:
                     lowLatency = false;
                     break;
                 default:
@@ -117,17 +127,24 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
             switch (i) {
                 case 0:
-                case 2:
+                case 3:
+                    // Small buffer - 2 frames
                     bufferSize = bytesPerFrame * 2;
                     break;
 
                 case 1:
-                case 3:
-                    // Try the larger buffer size
+                case 4:
+                    // Medium buffer - 4 frames (better for avoiding crackling)
+                    bufferSize = bytesPerFrame * 4;
+                    break;
+
+                case 2:
+                case 5:
+                    // Large buffer - use minimum recommended size
                     bufferSize = Math.max(AudioTrack.getMinBufferSize(sampleRate,
                             channelConfig,
                             AudioFormat.ENCODING_PCM_16BIT),
-                            bytesPerFrame * 2);
+                            bytesPerFrame * 4);
 
                     // Round to next frame
                     bufferSize = (((bufferSize + (bytesPerFrame - 1)) / bytesPerFrame) * bytesPerFrame);
@@ -180,7 +197,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
         int pendingMs = MoonBridge.getPendingAudioDuration();
 
         // Use a more lenient threshold to prevent audio flickering.
-        // Only drop audio when we have excessive buffering (over 100ms),
+        // Only drop audio when we have excessive buffering (over threshold),
         // and implement gradual recovery to avoid choppy audio.
         if (pendingMs > MAX_PENDING_AUDIO_MS) {
             consecutiveDrops++;
@@ -188,7 +205,15 @@ public class AndroidAudioRenderer implements AudioRenderer {
             if (consecutiveDrops == 1 || consecutiveDrops % 10 == 0) {
                 LimeLog.info("Dropping audio frame, pending: " + pendingMs + " ms (drops: " + consecutiveDrops + ")");
             }
+            // Mark that we need fade-in when resuming to avoid pops
+            needsFadeIn = true;
             return;
+        }
+
+        // Apply fade-in if we're resuming after drops to prevent clicks/pops
+        if (needsFadeIn && consecutiveDrops > 0) {
+            applyFadeIn(audioData);
+            needsFadeIn = false;
         }
 
         // Reset drop counter when we successfully write
@@ -197,14 +222,32 @@ public class AndroidAudioRenderer implements AudioRenderer {
             consecutiveDrops = 0;
         }
 
+        // Store reference for potential crossfade (optional future enhancement)
+        lastAudioFrame = audioData;
+
         // This will block until the write is completed.
         track.write(audioData, 0, audioData.length);
+    }
+
+    /**
+     * Apply a smooth fade-in to avoid audio pops when resuming playback.
+     * This modifies the audioData array in-place.
+     */
+    private void applyFadeIn(short[] audioData) {
+        int samplesToFade = Math.min(FADE_SAMPLES, audioData.length);
+        for (int i = 0; i < samplesToFade; i++) {
+            // Linear fade from 0 to 1
+            float fadeMultiplier = (float) i / samplesToFade;
+            audioData[i] = (short) (audioData[i] * fadeMultiplier);
+        }
     }
 
     @Override
     public void start() {
         // Reset audio state
         consecutiveDrops = 0;
+        needsFadeIn = false;
+        lastAudioFrame = null;
 
         if (enableAudioFx) {
             // Open an audio effect control session to allow equalizers to apply audio effects

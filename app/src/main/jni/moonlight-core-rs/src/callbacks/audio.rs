@@ -10,12 +10,17 @@ use crate::jni_helpers::*;
 use crate::opus::*;
 use libc::{c_char, c_int, c_void};
 use std::ptr;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicBool, Ordering};
 use log::{info, error, debug};
 
 // Global state for audio callbacks
 static OPUS_DECODER: AtomicPtr<OpusMSDecoder> = AtomicPtr::new(ptr::null_mut());
 static mut OPUS_CONFIG: Option<OPUS_MULTISTREAM_CONFIGURATION> = None;
+
+// FEC (Forward Error Correction) state tracking
+// We need to track the previous packet to use FEC when current packet is lost
+static mut LAST_PACKET_DATA: Option<Vec<u8>> = None;
+static LAST_PACKET_VALID: AtomicBool = AtomicBool::new(false);
 
 pub extern "C" fn bridge_ar_init(
     audio_configuration: c_int,
@@ -62,7 +67,10 @@ pub extern "C" fn bridge_ar_init(
     // Store config for later use
     unsafe {
         OPUS_CONFIG = Some(config);
+        // Initialize FEC state
+        LAST_PACKET_DATA = None;
     }
+    LAST_PACKET_VALID.store(false, Ordering::SeqCst);
 
     // Create opus decoder
     let mut error: c_int = 0;
@@ -144,7 +152,10 @@ pub extern "C" fn bridge_ar_cleanup() {
 
     unsafe {
         OPUS_CONFIG = None;
+        // Clear FEC state
+        LAST_PACKET_DATA = None;
     }
+    LAST_PACKET_VALID.store(false, Ordering::SeqCst);
 
     let env = match get_thread_env() {
         Some(e) => e,
@@ -193,28 +204,91 @@ pub extern "C" fn bridge_ar_decode_and_play_sample(sample_data: *mut c_char, sam
         return;
     }
 
-    // When sample_data is NULL (sample_length == 0), this triggers Opus packet loss
-    // concealment (PLC). The decoder will generate audio to fill the gap caused by
-    // the missing packet. This is critical for smooth audio playback.
-    let data_ptr = if sample_data.is_null() {
-        ptr::null()
-    } else {
-        sample_data as *const u8
-    };
+    let decode_len: c_int;
+    let is_packet_loss = sample_data.is_null() || sample_length == 0;
 
-    let decode_len = unsafe {
-        opus_multistream_decode(
-            decoder,
-            data_ptr,
-            sample_length,
-            decoded_data,
-            config.samplesPerFrame,
-            0,
-        )
-    };
+    if is_packet_loss {
+        // Packet loss detected - try to use FEC from previous packet first
+        let has_fec = LAST_PACKET_VALID.load(Ordering::Acquire);
+
+        if has_fec {
+            // Try FEC recovery using the previous packet's embedded FEC data
+            let fec_result = unsafe {
+                if let Some(ref last_data) = LAST_PACKET_DATA {
+                    opus_multistream_decode(
+                        decoder,
+                        last_data.as_ptr(),
+                        last_data.len() as c_int,
+                        decoded_data,
+                        config.samplesPerFrame,
+                        1, // decode_fec = 1 to use FEC
+                    )
+                } else {
+                    -1
+                }
+            };
+
+            if fec_result > 0 {
+                decode_len = fec_result;
+                debug!("FEC recovery successful: {} samples", decode_len);
+            } else {
+                // FEC failed, fall back to PLC (packet loss concealment)
+                decode_len = unsafe {
+                    opus_multistream_decode(
+                        decoder,
+                        ptr::null(),
+                        0,
+                        decoded_data,
+                        config.samplesPerFrame,
+                        0,
+                    )
+                };
+                debug!("PLC used after FEC failure: {} samples", decode_len);
+            }
+        } else {
+            // No previous packet available, use PLC directly
+            decode_len = unsafe {
+                opus_multistream_decode(
+                    decoder,
+                    ptr::null(),
+                    0,
+                    decoded_data,
+                    config.samplesPerFrame,
+                    0,
+                )
+            };
+            debug!("PLC used (no FEC available): {} samples", decode_len);
+        }
+
+        // Clear FEC state after packet loss
+        LAST_PACKET_VALID.store(false, Ordering::SeqCst);
+    } else {
+        // Normal packet - decode it
+        let data_ptr = sample_data as *const u8;
+
+        decode_len = unsafe {
+            opus_multistream_decode(
+                decoder,
+                data_ptr,
+                sample_length,
+                decoded_data,
+                config.samplesPerFrame,
+                0,
+            )
+        };
+
+        // Store this packet for potential FEC recovery on next packet loss
+        // Only store if decode was successful
+        if decode_len > 0 {
+            unsafe {
+                let data_slice = std::slice::from_raw_parts(data_ptr, sample_length as usize);
+                LAST_PACKET_DATA = Some(data_slice.to_vec());
+            }
+            LAST_PACKET_VALID.store(true, Ordering::Release);
+        }
+    }
 
     if decode_len > 0 {
-
         // Release the array before making JNI calls (commit changes with mode 0)
         release_primitive_array_critical(env, audio_buffer, decoded_data as *mut c_void, 0);
 
@@ -227,7 +301,8 @@ pub extern "C" fn bridge_ar_decode_and_play_sample(sample_data: *mut c_char, sam
             }
         }
     } else {
-        error!("Opus decode failed: decode_len={}, sample_len={}", decode_len, sample_length);
+        error!("Opus decode failed: decode_len={}, sample_len={}, is_loss={}",
+               decode_len, sample_length, is_packet_loss);
         // Abort - don't copy back since no valid data
         release_primitive_array_critical(env, audio_buffer, decoded_data as *mut c_void, JNI_ABORT);
     }
