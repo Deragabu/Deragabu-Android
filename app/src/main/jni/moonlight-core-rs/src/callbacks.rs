@@ -17,7 +17,9 @@ use std::sync::Mutex;
 
 // Global state for JNI callbacks
 static JVM: OnceCell<JavaVM> = OnceCell::new();
-static BRIDGE_CLASS_NAME: &str = "com/limelight/nvstream/jni/MoonBridge";
+
+// Bridge class name for JNI calls
+const BRIDGE_CLASS_NAME: &str = "com/limelight/nvstream/jni/MoonBridge";
 
 // Opus decoder state - now using Rust implementation
 static OPUS_DECODER: OnceCell<ThreadSafeOpusDecoder> = OnceCell::new();
@@ -28,14 +30,23 @@ static DECODED_AUDIO_BUFFER: OnceCell<Mutex<Option<GlobalRef>>> = OnceCell::new(
 
 /// Initialize the callback system with JNI environment
 pub fn init_callbacks(env: &mut JNIEnv, _class: &JClass) -> Result<(), jni::errors::Error> {
+    info!("init_callbacks: Starting initialization...");
+
     // Store JavaVM
     let jvm = env.get_java_vm()?;
-    let _ = JVM.set(jvm);
+    info!("init_callbacks: Got JavaVM");
+
+    match JVM.set(jvm) {
+        Ok(_) => info!("init_callbacks: JVM stored successfully"),
+        Err(_) => info!("init_callbacks: JVM was already stored"),
+    }
 
     // Initialize Opus decoder container
+    info!("init_callbacks: Initializing Opus decoder container...");
     let _ = OPUS_DECODER.set(ThreadSafeOpusDecoder::new());
 
     // Initialize buffer containers
+    info!("init_callbacks: Initializing buffer containers...");
     let _ = DECODED_FRAME_BUFFER.set(Mutex::new(None));
     let _ = DECODED_AUDIO_BUFFER.set(Mutex::new(None));
 
@@ -76,6 +87,7 @@ pub unsafe extern "C" fn bridge_dr_setup(
     _dr_flags: c_int,
 ) -> c_int {
     let Some(mut env) = get_thread_env() else {
+        error!("bridge_dr_setup: Failed to get thread env");
         return -1;
     };
 
@@ -650,45 +662,82 @@ pub unsafe extern "C" fn bridge_cl_set_controller_led(controller_number: u16, r:
 // Callback Structures for moonlight-common-c
 // ============================================================================
 
-/// Create video renderer callbacks structure
-pub fn create_video_callbacks(capabilities: c_int) -> DECODER_RENDERER_CALLBACKS {
-    DECODER_RENDERER_CALLBACKS {
-        setup: Some(bridge_dr_setup),
-        start: Some(bridge_dr_start),
-        stop: Some(bridge_dr_stop),
-        cleanup: Some(bridge_dr_cleanup),
-        submitDecodeUnit: Some(bridge_dr_submit_decode_unit),
-        capabilities,
+// Static callback structures that persist for the lifetime of the connection
+// These MUST be static because moonlight-common-c keeps references to them
+
+// Static callbacks - use Box::leak to create 'static references
+static VIDEO_CALLBACKS: OnceCell<&'static DECODER_RENDERER_CALLBACKS> = OnceCell::new();
+static AUDIO_CALLBACKS: OnceCell<&'static AUDIO_RENDERER_CALLBACKS> = OnceCell::new();
+static CONNECTION_CALLBACKS: OnceCell<&'static CONNECTION_LISTENER_CALLBACKS> = OnceCell::new();
+
+/// Initialize and get video renderer callbacks structure
+pub fn create_video_callbacks(capabilities: c_int) -> &'static DECODER_RENDERER_CALLBACKS {
+    info!("create_video_callbacks: capabilities={}", capabilities);
+
+    VIDEO_CALLBACKS.get_or_init(|| {
+        info!("create_video_callbacks: Creating new callback structure");
+        Box::leak(Box::new(DECODER_RENDERER_CALLBACKS {
+            setup: Some(bridge_dr_setup),
+            start: Some(bridge_dr_start),
+            stop: Some(bridge_dr_stop),
+            cleanup: Some(bridge_dr_cleanup),
+            submitDecodeUnit: Some(bridge_dr_submit_decode_unit),
+            capabilities: 0,
+        }))
+    });
+
+    // Update capabilities in the leaked structure
+    // This is safe because we're the only writer and moonlight-common-c reads synchronously
+    let cb = *VIDEO_CALLBACKS.get().unwrap();
+    let cb_mut = cb as *const DECODER_RENDERER_CALLBACKS as *mut DECODER_RENDERER_CALLBACKS;
+    unsafe {
+        (*cb_mut).capabilities = capabilities;
     }
+
+    info!("create_video_callbacks: Returning callbacks at {:p}", cb);
+    cb
 }
 
-/// Create audio renderer callbacks structure
-pub fn create_audio_callbacks() -> AUDIO_RENDERER_CALLBACKS {
-    AUDIO_RENDERER_CALLBACKS {
-        init: Some(bridge_ar_init),
-        start: Some(bridge_ar_start),
-        stop: Some(bridge_ar_stop),
-        cleanup: Some(bridge_ar_cleanup),
-        decodeAndPlaySample: Some(bridge_ar_decode_and_play_sample),
-        capabilities: CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION,
-    }
+/// Get audio renderer callbacks structure (static lifetime)
+pub fn create_audio_callbacks() -> &'static AUDIO_RENDERER_CALLBACKS {
+    info!("create_audio_callbacks: Creating audio callbacks");
+    let result = AUDIO_CALLBACKS.get_or_init(|| {
+        info!("create_audio_callbacks: Creating new callback structure");
+        Box::leak(Box::new(AUDIO_RENDERER_CALLBACKS {
+            init: Some(bridge_ar_init),
+            start: Some(bridge_ar_start),
+            stop: Some(bridge_ar_stop),
+            cleanup: Some(bridge_ar_cleanup),
+            decodeAndPlaySample: Some(bridge_ar_decode_and_play_sample),
+            capabilities: CAPABILITY_SUPPORTS_ARBITRARY_AUDIO_DURATION,
+        }))
+    });
+    info!("create_audio_callbacks: Returning callbacks at {:p}", result);
+    result
 }
 
-/// Create connection listener callbacks structure
-pub fn create_connection_callbacks() -> CONNECTION_LISTENER_CALLBACKS {
-    CONNECTION_LISTENER_CALLBACKS {
-        stageStarting: Some(bridge_cl_stage_starting),
-        stageComplete: Some(bridge_cl_stage_complete),
-        stageFailed: Some(bridge_cl_stage_failed),
-        connectionStarted: Some(bridge_cl_connection_started),
-        connectionTerminated: Some(bridge_cl_connection_terminated),
-        logMessage: None, // Varargs not supported in stable Rust
-        rumble: Some(bridge_cl_rumble),
-        connectionStatusUpdate: Some(bridge_cl_connection_status_update),
-        setHdrMode: Some(bridge_cl_set_hdr_mode),
-        rumbleTriggers: Some(bridge_cl_rumble_triggers),
-        setMotionEventState: Some(bridge_cl_set_motion_event_state),
-        setControllerLED: Some(bridge_cl_set_controller_led),
-    }
+/// Get connection listener callbacks structure (static lifetime)
+pub fn create_connection_callbacks() -> &'static CONNECTION_LISTENER_CALLBACKS {
+    info!("create_connection_callbacks: Creating connection callbacks");
+    let result = CONNECTION_CALLBACKS.get_or_init(|| {
+        info!("create_connection_callbacks: Creating new callback structure");
+        Box::leak(Box::new(CONNECTION_LISTENER_CALLBACKS {
+            stageStarting: Some(bridge_cl_stage_starting),
+            stageComplete: Some(bridge_cl_stage_complete),
+            stageFailed: Some(bridge_cl_stage_failed),
+            connectionStarted: Some(bridge_cl_connection_started),
+            connectionTerminated: Some(bridge_cl_connection_terminated),
+            logMessage: None, // Varargs not supported in stable Rust
+            rumble: Some(bridge_cl_rumble),
+            connectionStatusUpdate: Some(bridge_cl_connection_status_update),
+            setHdrMode: Some(bridge_cl_set_hdr_mode),
+            rumbleTriggers: Some(bridge_cl_rumble_triggers),
+            setMotionEventState: Some(bridge_cl_set_motion_event_state),
+            setControllerLED: Some(bridge_cl_set_controller_led),
+            setAdaptiveTriggers: None, // Not currently implemented
+        }))
+    });
+    info!("create_connection_callbacks: Returning callbacks at {:p}", result);
+    result
 }
 

@@ -27,7 +27,7 @@ pub const COLOR_RANGE_FULL: c_int = 1;
 pub const ENCFLG_NONE: c_int = 0x00000000;
 pub const ENCFLG_AUDIO: c_int = 0x00000001;
 pub const ENCFLG_VIDEO: c_int = 0x00000002;
-pub const ENCFLG_ALL: c_int = 0x7FFFFFFF;
+pub const ENCFLG_ALL: c_int = -1; // 0xFFFFFFFF as signed int
 
 // Buffer types
 pub const BUFFER_TYPE_PICDATA: c_int = 0x00;
@@ -210,6 +210,22 @@ pub type ConnListenerSetControllerLED = Option<
     unsafe extern "C" fn(controllerNumber: u16, r: u8, g: u8, b: u8),
 >;
 
+// DS effect constants for adaptive triggers
+pub const DS_EFFECT_PAYLOAD_SIZE: usize = 10;
+pub const DS_EFFECT_RIGHT_TRIGGER: u8 = 0x04;
+pub const DS_EFFECT_LEFT_TRIGGER: u8 = 0x08;
+
+pub type ConnListenerSetAdaptiveTriggers = Option<
+    unsafe extern "C" fn(
+        controllerNumber: u16,
+        eventFlags: u8,
+        typeLeft: u8,
+        typeRight: u8,
+        left: *mut u8,
+        right: *mut u8,
+    ),
+>;
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct CONNECTION_LISTENER_CALLBACKS {
@@ -225,6 +241,7 @@ pub struct CONNECTION_LISTENER_CALLBACKS {
     pub rumbleTriggers: ConnListenerRumbleTriggers,
     pub setMotionEventState: ConnListenerSetMotionEventState,
     pub setControllerLED: ConnListenerSetControllerLED,
+    pub setAdaptiveTriggers: ConnListenerSetAdaptiveTriggers,
 }
 
 // Opus decoder - now using Rust implementation via audiopus crate

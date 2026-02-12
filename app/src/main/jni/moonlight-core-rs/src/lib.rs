@@ -25,6 +25,7 @@ pub use crypto::*;
 use android_logger::Config;
 use log::LevelFilter;
 use once_cell::sync::OnceCell;
+use std::panic;
 
 static INIT: OnceCell<()> = OnceCell::new();
 
@@ -36,6 +37,26 @@ pub fn init_logging() {
                 .with_max_level(LevelFilter::Debug)
                 .with_tag("moonlight-core-rs"),
         );
+
+        // Set up panic hook to log panics to Android logcat
+        panic::set_hook(Box::new(|panic_info| {
+            let msg = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "Unknown panic".to_string()
+            };
+
+            let location = if let Some(loc) = panic_info.location() {
+                format!("{}:{}:{}", loc.file(), loc.line(), loc.column())
+            } else {
+                "unknown location".to_string()
+            };
+
+            log::error!("RUST PANIC: {} at {}", msg, location);
+        }));
+
         log::info!("Moonlight Core RS initialized");
     });
 }

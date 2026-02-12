@@ -304,6 +304,7 @@ fn build_opus() {
     // Main opus sources
     let opus_sources = [
         "analysis.c",
+        "extensions.c",
         "mapping_matrix.c",
         "mlp.c",
         "mlp_data.c",

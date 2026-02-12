@@ -61,9 +61,11 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_MoonBridge_init<'local>(
     class: JClass<'local>,
 ) {
     init_logging();
+    info!("MoonBridge init called");
 
-    if let Err(e) = init_callbacks(&mut env, &class) {
-        log::error!("Failed to initialize callbacks: {:?}", e);
+    match init_callbacks(&mut env, &class) {
+        Ok(_) => info!("init_callbacks succeeded"),
+        Err(e) => log::error!("Failed to initialize callbacks: {:?}", e),
     }
 
     info!("MoonBridge initialized (Rust)");
@@ -375,23 +377,34 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_MoonBridge_startConnectio
     color_space: jint,
     color_range: jint,
 ) -> jint {
+    log::info!("startConnection called: {}x{}@{} bitrate={}", width, height, fps, bitrate);
+
     // Convert Java strings to C strings
     let address_str = match env.get_string(&address) {
         Ok(s) => s,
-        Err(_) => return -1,
+        Err(e) => {
+            log::error!("Failed to get address string: {:?}", e);
+            return -1;
+        }
     };
     let address_c = CString::new(unsafe { CStr::from_ptr(address_str.as_ptr()) }.to_bytes())
         .unwrap_or_default();
+    log::debug!("Address: {:?}", address_c);
 
     let app_version_str = match env.get_string(&app_version) {
         Ok(s) => s,
-        Err(_) => return -1,
+        Err(e) => {
+            log::error!("Failed to get app_version string: {:?}", e);
+            return -1;
+        }
     };
     let app_version_c =
         CString::new(unsafe { CStr::from_ptr(app_version_str.as_ptr()) }.to_bytes())
             .unwrap_or_default();
+    log::debug!("App version: {:?}", app_version_c);
 
     let gfe_version_c = if gfe_version.is_null() {
+        log::debug!("GFE version is null");
         None
     } else {
         env.get_string(&gfe_version).ok().map(|s| {
@@ -400,6 +413,7 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_MoonBridge_startConnectio
     };
 
     let rtsp_session_url_c = if rtsp_session_url.is_null() {
+        log::debug!("RTSP session URL is null");
         None
     } else {
         env.get_string(&rtsp_session_url).ok().map(|s| {
@@ -411,17 +425,26 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_MoonBridge_startConnectio
     let mut aes_key = [0u8; 16];
     let mut aes_iv = [0u8; 16];
 
+    log::debug!("Getting AES key...");
     if let Ok(key_elements) = unsafe { env.get_array_elements(&ri_aes_key, jni::objects::ReleaseMode::NoCopyBack) } {
         let key_slice = unsafe { std::slice::from_raw_parts(key_elements.as_ptr() as *const u8, 16) };
         aes_key.copy_from_slice(key_slice);
+        log::debug!("AES key obtained");
+    } else {
+        log::error!("Failed to get AES key");
     }
 
+    log::debug!("Getting AES IV...");
     if let Ok(iv_elements) = unsafe { env.get_array_elements(&ri_aes_iv, jni::objects::ReleaseMode::NoCopyBack) } {
         let iv_slice = unsafe { std::slice::from_raw_parts(iv_elements.as_ptr() as *const u8, 16) };
         aes_iv.copy_from_slice(iv_slice);
+        log::debug!("AES IV obtained");
+    } else {
+        log::error!("Failed to get AES IV");
     }
 
     // Build server info
+    log::debug!("Building server info...");
     let server_info = SERVER_INFORMATION {
         address: address_c.as_ptr(),
         serverInfoAppVersion: app_version_c.as_ptr(),
@@ -437,13 +460,16 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_MoonBridge_startConnectio
     };
 
     // Determine encryption flags based on CPU capabilities
-    let encryption_flags = if has_fast_aes() {
+    let has_aes = has_fast_aes();
+    log::debug!("Has fast AES: {}", has_aes);
+    let encryption_flags = if has_aes {
         ENCFLG_ALL
     } else {
         ENCFLG_AUDIO
     };
 
     // Build stream config
+    log::debug!("Building stream config...");
     let stream_config = STREAM_CONFIGURATION {
         width,
         height,
@@ -461,25 +487,32 @@ pub extern "system" fn Java_com_limelight_nvstream_jni_MoonBridge_startConnectio
         remoteInputAesIv: aes_iv,
     };
 
-    // Create callbacks
+    // Create callbacks - these return static references that persist
+    log::debug!("Creating callbacks...");
     let video_callbacks = create_video_callbacks(video_capabilities);
+    log::debug!("Video callbacks created, capabilities: {}", video_capabilities);
     let audio_callbacks = create_audio_callbacks();
+    log::debug!("Audio callbacks created");
     let connection_callbacks = create_connection_callbacks();
+    log::debug!("Connection callbacks created");
 
     // Start connection
-    unsafe {
+    log::info!("Calling LiStartConnection...");
+    let result = unsafe {
         LiStartConnection(
             &server_info,
             &stream_config,
-            &connection_callbacks,
-            &video_callbacks,
-            &audio_callbacks,
+            connection_callbacks,
+            video_callbacks,
+            audio_callbacks,
             ptr::null_mut(),
             0,
             ptr::null_mut(),
             0,
         )
-    }
+    };
+    log::info!("LiStartConnection returned: {}", result);
+    result
 }
 
 // ============================================================================

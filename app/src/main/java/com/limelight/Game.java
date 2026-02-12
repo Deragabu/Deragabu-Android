@@ -748,9 +748,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             } else {
                 LimeLog.warning("SemWindowManager.getInstance() returned null");
             }
-        } catch (ClassNotFoundException | NoSuchMethodException | InvocationTargetException |
-                 IllegalAccessException e) {
-            Log.e(TAG, "setMetaKeyCaptureState: " + e.getMessage(), e);
+        } catch (ClassNotFoundException e) {
+            // This is expected on non-Samsung devices, so just log at debug level
+            LimeLog.info("Samsung meta key capture not available on this device");
+        } catch (NoSuchMethodException | InvocationTargetException | IllegalAccessException e) {
+            // These are unexpected errors that should be logged
+            LimeLog.warning("setMetaKeyCaptureState failed: " + e.getMessage());
         }
     }
 
