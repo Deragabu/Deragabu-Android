@@ -20,6 +20,11 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
     private AudioTrack track;
 
+    // Audio latency control constants
+    private static final int MAX_PENDING_AUDIO_MS = 100;  // Maximum pending audio before dropping
+    private static final int TARGET_PENDING_AUDIO_MS = 60; // Target latency for recovery
+    private int consecutiveDrops = 0;
+
     public AndroidAudioRenderer(Context context, boolean enableAudioFx) {
         this.context = context;
         this.enableAudioFx = enableAudioFx;
@@ -34,34 +39,18 @@ public class AndroidAudioRenderer implements AudioRenderer {
                 .setChannelMask(channelConfig)
                 .build();
 
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            // Use FLAG_LOW_LATENCY on L through N
-            if (lowLatency) {
-                attributesBuilder.setFlags(AudioAttributes.FLAG_LOW_LATENCY);
-            }
+        AudioTrack.Builder trackBuilder = new AudioTrack.Builder()
+                .setAudioFormat(format)
+                .setAudioAttributes(attributesBuilder.build())
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(bufferSize);
+
+        // Use PERFORMANCE_MODE_LOW_LATENCY on O and later
+        if (lowLatency) {
+            trackBuilder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY);
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            AudioTrack.Builder trackBuilder = new AudioTrack.Builder()
-                    .setAudioFormat(format)
-                    .setAudioAttributes(attributesBuilder.build())
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .setBufferSizeInBytes(bufferSize);
-
-            // Use PERFORMANCE_MODE_LOW_LATENCY on O and later
-            if (lowLatency) {
-                trackBuilder.setPerformanceMode(AudioTrack.PERFORMANCE_MODE_LOW_LATENCY);
-            }
-
-            return trackBuilder.build();
-        }
-        else {
-            return new AudioTrack(attributesBuilder.build(),
-                    format,
-                    bufferSize,
-                    AudioTrack.MODE_STREAM,
-                    AudioManager.AUDIO_SESSION_ID_GENERATE);
-        }
+        return trackBuilder.build();
     }
 
     @Override
@@ -187,20 +176,35 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
     @Override
     public void playDecodedAudio(short[] audioData) {
-        // Only queue up to 40 ms of pending audio data in addition to what AudioTrack is buffering for us.
-        if (MoonBridge.getPendingAudioDuration() < 40) {
-            // This will block until the write is completed. That can cause a backlog
-            // of pending audio data, so we do the above check to be able to bound
-            // latency at 40 ms in that situation.
-            track.write(audioData, 0, audioData.length);
+        int pendingMs = MoonBridge.getPendingAudioDuration();
+
+        // Use a more lenient threshold to prevent audio flickering.
+        // Only drop audio when we have excessive buffering (over 100ms),
+        // and implement gradual recovery to avoid choppy audio.
+        if (pendingMs > MAX_PENDING_AUDIO_MS) {
+            consecutiveDrops++;
+            // Only log occasionally to avoid log spam
+            if (consecutiveDrops == 1 || consecutiveDrops % 10 == 0) {
+                LimeLog.info("Dropping audio frame, pending: " + pendingMs + " ms (drops: " + consecutiveDrops + ")");
+            }
+            return;
         }
-        else {
-            LimeLog.info("Too much pending audio data: " + MoonBridge.getPendingAudioDuration() +" ms");
+
+        // Reset drop counter when we successfully write
+        if (consecutiveDrops > 0 && pendingMs < TARGET_PENDING_AUDIO_MS) {
+            LimeLog.info("Audio recovered after " + consecutiveDrops + " drops, pending: " + pendingMs + " ms");
+            consecutiveDrops = 0;
         }
+
+        // This will block until the write is completed.
+        track.write(audioData, 0, audioData.length);
     }
 
     @Override
     public void start() {
+        // Reset audio state
+        consecutiveDrops = 0;
+
         if (enableAudioFx) {
             // Open an audio effect control session to allow equalizers to apply audio effects
             Intent i = new Intent(AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION);
