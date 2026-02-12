@@ -40,6 +40,12 @@ Deragabu requires hardware with MediaCodec C2 low-latency decoder support. The m
 
 For a detailed summary of changes, see [CHANGES_SUMMARY.md](docs/CHANGES_SUMMARY.md).
 
+## Building
+* Install Android Studio and the Android NDK
+* Run ‘git submodule update --init --recursive’ from within moonlight-android/
+* In moonlight-android/, create a file called ‘local.properties’. Add an ‘ndk.dir=’ property to the local.properties file and set it equal to your NDK directory.
+* Build the APK using Android Studio or gradle
+
 ## Authors
 
 * [Cameron Gutman](https://github.com/cgutman)  
