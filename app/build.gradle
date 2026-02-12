@@ -12,11 +12,8 @@ android {
         minSdk 34
         targetSdk 36
 
-        versionName "13"
-        versionCode = 314
-
-        // Generate native debug symbols to allow Google Play to symbolicate our native crashes
-        ndk.debugSymbolLevel = 'FULL'
+        versionName "1"
+        versionCode = 1000
 
         // Only support 64-bit ARM architecture (remove armv7 and x86 support)
         ndk {
@@ -41,25 +38,6 @@ android {
         encoding "UTF-8"
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
-    }
-
-    lint {
-        disable 'MissingTranslation'
-        lintConfig file('lint.xml')
-    }
-
-    bundle {
-        language {
-            // Avoid splitting by language, since we allow users
-            // to manually switch language in settings.
-            enableSplit = false
-        }
-        density {
-            // FIXME: This should not be necessary but we get
-            // weird crashes due to missing drawable resources
-            // when this split is enabled.
-            enableSplit = false
-        }
     }
 
     buildTypes {
@@ -102,7 +80,6 @@ dependencies {
     implementation 'org.bouncycastle:bcprov-jdk18on:1.83'
     implementation 'org.bouncycastle:bcpkix-jdk18on:1.83'
     implementation 'com.squareup.okhttp3:okhttp:5.3.2'
-    implementation 'com.github.cgutman:ShieldControllerExtensions:1.0.1'
     implementation 'com.tencent:mmkv:2.3.0'
 
     // AndroidX Fragment and Preference
