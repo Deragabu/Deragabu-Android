@@ -189,15 +189,21 @@ public class NvConnection {
     }
 
     /**
-     * Apply network-based bitrate cap for cellular connections.
-     * 4G/LTE connections are capped at 50 Mbps to avoid congestion and excessive data usage.
+     * Apply network-based bitrate cap for cellular and WiFi connections.
+     * - Cellular: capped at 50 Mbps to avoid congestion and excessive data usage
+     * - WiFi 4 (802.11n): capped at 80 Mbps (typical real-world throughput)
+     * - WiFi 5 (802.11ac): capped at 200 Mbps (typical real-world throughput)
+     * - WiFi 6/6E/7 (802.11ax/be): no cap (supports high bitrate streaming)
      *
      * @param bitrate The calculated bitrate in kbps
      * @return The capped bitrate in kbps
      */
+    @SuppressWarnings("deprecation")
     private int applyNetworkBitrateCap(int bitrate) {
-        // Maximum bitrate for cellular connections (50 Mbps)
-        final int CELLULAR_MAX_BITRATE_KBPS = 50000;
+        // Maximum bitrate for different network types
+        final int CELLULAR_MAX_BITRATE_KBPS = 50000;  // 50 Mbps
+        final int WIFI_4_MAX_BITRATE_KBPS = 80000;    // 80 Mbps for WiFi 4 (802.11n)
+        final int WIFI_5_MAX_BITRATE_KBPS = 200000;   // 200 Mbps for WiFi 5 (802.11ac)
 
         ConnectivityManager connMgr = (ConnectivityManager) appContext.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (connMgr == null) {
@@ -207,11 +213,53 @@ public class NvConnection {
         Network activeNetwork = connMgr.getActiveNetwork();
         if (activeNetwork != null) {
             NetworkCapabilities netCaps = connMgr.getNetworkCapabilities(activeNetwork);
-            if (netCaps != null && netCaps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
-                if (bitrate > CELLULAR_MAX_BITRATE_KBPS) {
-                    LimeLog.info("Cellular network detected, capping bitrate from " + bitrate +
-                            " kbps to " + CELLULAR_MAX_BITRATE_KBPS + " kbps");
-                    return CELLULAR_MAX_BITRATE_KBPS;
+            if (netCaps != null) {
+                // Check for cellular connection
+                if (netCaps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                    if (bitrate > CELLULAR_MAX_BITRATE_KBPS) {
+                        LimeLog.info("Cellular network detected, capping bitrate from " + bitrate +
+                                " kbps to " + CELLULAR_MAX_BITRATE_KBPS + " kbps");
+                        return CELLULAR_MAX_BITRATE_KBPS;
+                    }
+                }
+                // Check for WiFi connection
+                else if (netCaps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                    // Determine WiFi standard (API 30+)
+                    android.net.wifi.WifiManager wifiManager =
+                        (android.net.wifi.WifiManager) appContext.getSystemService(Context.WIFI_SERVICE);
+                    if (wifiManager != null) {
+                        android.net.wifi.WifiInfo wifiInfo = wifiManager.getConnectionInfo();
+                        if (wifiInfo != null) {
+                            int wifiStandard = wifiInfo.getWifiStandard();
+                            int maxBitrate = bitrate;
+                            String standardName = "Unknown";
+
+                            // Determine WiFi standard and apply appropriate cap
+                            if (wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_LEGACY ||
+                                wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_11N) {
+                                // WiFi 4 (802.11n) or older
+                                maxBitrate = WIFI_4_MAX_BITRATE_KBPS;
+                                standardName = "WiFi 4 (802.11n)";
+                            } else if (wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_11AC) {
+                                // WiFi 5 (802.11ac)
+                                maxBitrate = WIFI_5_MAX_BITRATE_KBPS;
+                                standardName = "WiFi 5 (802.11ac)";
+                            } else if (wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_11AX ||
+                                       wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_11BE) {
+                                // WiFi 6/6E/7 (802.11ax/be) - no cap needed
+                                standardName = wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_11BE ?
+                                    "WiFi 7 (802.11be)" : "WiFi 6/6E (802.11ax)";
+                                LimeLog.info(standardName + " detected, no bitrate cap applied");
+                                return bitrate;
+                            }
+
+                            if (bitrate > maxBitrate) {
+                                LimeLog.info(standardName + " detected, capping bitrate from " +
+                                        bitrate + " kbps to " + maxBitrate + " kbps");
+                                return maxBitrate;
+                            }
+                        }
+                    }
                 }
             }
         }
