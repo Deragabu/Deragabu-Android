@@ -44,5 +44,4 @@ app/.externalNativeBuild/
 .cxx/
 
 # Auto-downloaded source code
-app/src/main/jni/moonlight-core-rs/moonlight-common-c/
-app/src/main/jni/moonlight-core-rs/opus/
+/app/src/main/jni/moonlight-core-rs/target/

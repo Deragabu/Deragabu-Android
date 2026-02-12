@@ -77,6 +77,7 @@ cargo {
     libname = "moonlight_core"
     targets = ["arm64"]
     profile = "release"
+    targetDirectory = "./src/main/jni/moonlight-core-rs/target"
 }
 
 // Hook Rust compilation into Android build

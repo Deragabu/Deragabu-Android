@@ -10,7 +10,12 @@ use std::process::Command;
 fn main() {
     let target = env::var("TARGET").unwrap();
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let moonlight_common_c_dir = manifest_dir.join("moonlight-common-c");
+
+    // Use a stable path for downloaded dependencies (not OUT_DIR which changes with each build)
+    let deps_dir = manifest_dir.join("target").join("deps");
+    std::fs::create_dir_all(&deps_dir).ok();
+
+    let moonlight_common_c_dir = deps_dir.join("moonlight-common-c");
 
     // Tell cargo to re-run if our source files change
     println!("cargo:rerun-if-changed=src/ffi.rs");
@@ -26,10 +31,9 @@ fn main() {
         return;
     }
 
-    // Download moonlight-common-c if not present or update if exists
-    download_or_update_moonlight_common_c(&moonlight_common_c_dir);
+    // Download moonlight-common-c if not present
+    download_moonlight_common_c(&moonlight_common_c_dir);
 
-    println!("cargo:rerun-if-changed={}", moonlight_common_c_dir.display());
 
     // Build opus library
     build_opus();
@@ -100,13 +104,17 @@ fn build_opus() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
+    // Use stable deps directory for downloaded source
+    let deps_dir = manifest_dir.join("target").join("deps");
+    std::fs::create_dir_all(&deps_dir).ok();
+
     // First, try to find opus source in the project's opus directory
     let project_opus_dir = manifest_dir.join("opus");
     let opus_dir = if project_opus_dir.exists() {
         project_opus_dir
     } else {
-        // Download opus source directly
-        download_opus(&out_dir)
+        // Download opus source directly to deps directory
+        download_opus(&deps_dir)
     };
 
     if !opus_dir.exists() {
@@ -355,74 +363,41 @@ fn download_opus(out_dir: &PathBuf) -> PathBuf {
     opus_dir
 }
 
-/// Download or update moonlight-common-c from GitHub
-fn download_or_update_moonlight_common_c(target_dir: &PathBuf) {
+/// Download moonlight-common-c from GitHub
+fn download_moonlight_common_c(target_dir: &PathBuf) {
     let repo_url = "https://github.com/moonlight-stream/moonlight-common-c.git";
 
-    if target_dir.exists() && target_dir.join(".git").exists() {
-        // Directory exists and is a git repo - pull latest changes
-        println!("cargo:warning=Updating moonlight-common-c from GitHub...");
+    // If directory already exists with source files, skip download
+    if target_dir.exists() && target_dir.join("src").exists() {
+        return;
+    }
 
-        let status = Command::new("git")
-            .current_dir(target_dir)
-            .args(["pull", "--ff-only"])
-            .status();
+    println!("cargo:warning=Downloading moonlight-common-c from GitHub...");
 
-        match status {
-            Ok(s) if s.success() => {
-                println!("cargo:warning=Successfully updated moonlight-common-c");
-            }
-            Ok(_) => {
-                // Pull failed, try to reset and pull
-                println!("cargo:warning=Pull failed, trying to reset and fetch...");
-                let _ = Command::new("git")
-                    .current_dir(target_dir)
-                    .args(["fetch", "origin"])
-                    .status();
-                let _ = Command::new("git")
-                    .current_dir(target_dir)
-                    .args(["reset", "--hard", "origin/master"])
-                    .status();
-            }
-            Err(e) => {
-                eprintln!("Warning: Failed to update moonlight-common-c: {}", e);
-            }
+    // Remove directory if it exists but is incomplete
+    if target_dir.exists() {
+        let _ = std::fs::remove_dir_all(target_dir);
+    }
+
+    let status = Command::new("git")
+        .args([
+            "clone",
+            "--recursive",
+            "--depth", "1",
+            repo_url,
+        ])
+        .arg(target_dir)
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            println!("cargo:warning=Successfully downloaded moonlight-common-c to {:?}", target_dir);
         }
-
-        // Update submodules
-        let _ = Command::new("git")
-            .current_dir(target_dir)
-            .args(["submodule", "update", "--init", "--recursive"])
-            .status();
-    } else {
-        // Directory doesn't exist - clone
-        println!("cargo:warning=Downloading moonlight-common-c from GitHub...");
-
-        // Remove directory if it exists but is not a git repo
-        if target_dir.exists() {
-            let _ = std::fs::remove_dir_all(target_dir);
+        Ok(s) => {
+            panic!("Failed to clone moonlight-common-c: git exited with status {}", s);
         }
-
-        let status = Command::new("git")
-            .args([
-                "clone",
-                "--recursive",
-                "--depth", "1",
-                repo_url,
-            ])
-            .arg(target_dir)
-            .status();
-
-        match status {
-            Ok(s) if s.success() => {
-                println!("cargo:warning=Successfully downloaded moonlight-common-c to {:?}", target_dir);
-            }
-            Ok(s) => {
-                panic!("Failed to clone moonlight-common-c: git exited with status {}", s);
-            }
-            Err(e) => {
-                panic!("Failed to run git to clone moonlight-common-c: {}", e);
-            }
+        Err(e) => {
+            panic!("Failed to run git to clone moonlight-common-c: {}", e);
         }
     }
 }
