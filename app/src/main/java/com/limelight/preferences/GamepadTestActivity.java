@@ -18,9 +18,9 @@ import android.widget.TextView;
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.limelight.R;
+import com.limelight.binding.input.ControllerDetection;
 import com.limelight.binding.input.ControllerHandler;
 import com.limelight.binding.input.driver.UsbDriverService;
-import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.utils.UiHelper;
 
 import java.util.ArrayList;
@@ -193,8 +193,9 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
         info.hasTouchpad = device.getMotionRange(android.view.MotionEvent.AXIS_X, InputDevice.SOURCE_TOUCHPAD) != null;
 
         // Check for paddles and share button
-        info.hasPaddles = MoonBridge.guessControllerHasPaddles(info.vendorId, info.productId);
-        info.hasShareButton = MoonBridge.guessControllerHasShareButton(info.vendorId, info.productId);
+        // Using Java implementation instead of native calls
+        info.hasPaddles = ControllerDetection.guessControllerHasPaddles(info.vendorId, info.productId);
+        info.hasShareButton = ControllerDetection.guessControllerHasShareButton(info.vendorId, info.productId);
 
         return info;
     }

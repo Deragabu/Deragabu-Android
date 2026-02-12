@@ -452,11 +452,5 @@ public class MoonBridge {
 
     public static native String getLaunchUrlQueryParameters();
 
-    public static native byte guessControllerType(int vendorId, int productId);
-
-    public static native boolean guessControllerHasPaddles(int vendorId, int productId);
-
-    public static native boolean guessControllerHasShareButton(int vendorId, int productId);
-
     public static native void init();
 }

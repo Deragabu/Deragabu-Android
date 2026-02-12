@@ -709,8 +709,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // These aren't always present in the Android key layout files, so they won't show up
         // in our normal InputDevice.hasKeys() probing.
-        context.hasPaddles = MoonBridge.guessControllerHasPaddles(context.vendorId, context.productId);
-        context.hasShare = MoonBridge.guessControllerHasShareButton(context.vendorId, context.productId);
+        // Using Java implementation instead of native calls for better performance
+        context.hasPaddles = ControllerDetection.guessControllerHasPaddles(context.vendorId, context.productId);
+        context.hasShare = ControllerDetection.guessControllerHasShareButton(context.vendorId, context.productId);
 
         // Try to use the InputDevice's associated vibrators first
         if (hasQuadAmplitudeControlledRumbleVibrators(dev.getVibratorManager())) {
@@ -3310,8 +3311,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     type = MoonBridge.LI_CTYPE_NINTENDO;
                     break;
                 default:
-                    // Consult SDL's controller type list to see if it knows
-                    type = MoonBridge.guessControllerType(inputDevice.getVendorId(), inputDevice.getProductId());
+                    // Use Java implementation instead of native call
+                    type = ControllerDetection.guessControllerType(inputDevice.getVendorId(), inputDevice.getProductId());
                     break;
             }
 

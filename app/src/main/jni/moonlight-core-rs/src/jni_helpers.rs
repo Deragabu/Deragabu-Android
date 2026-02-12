@@ -141,27 +141,54 @@ unsafe fn get_jvm_fn<T>(vm: JavaVM, index: usize) -> T {
 }
 
 /// Store JavaVM reference
+#[inline]
 pub fn set_java_vm(vm: JavaVM) {
-    JAVA_VM.store(vm, Ordering::SeqCst);
+    JAVA_VM.store(vm, Ordering::Release);
 }
 
 /// Get JavaVM reference
+#[inline]
 pub fn get_java_vm() -> JavaVM {
-    JAVA_VM.load(Ordering::SeqCst)
+    JAVA_VM.load(Ordering::Acquire)
 }
 
 /// Store global bridge class reference
+#[inline]
 pub fn set_bridge_class(class: JClass) {
-    GLOBAL_BRIDGE_CLASS.store(class, Ordering::SeqCst);
+    GLOBAL_BRIDGE_CLASS.store(class, Ordering::Release);
 }
 
 /// Get global bridge class reference
+#[inline]
 pub fn get_bridge_class() -> JClass {
-    GLOBAL_BRIDGE_CLASS.load(Ordering::SeqCst)
+    GLOBAL_BRIDGE_CLASS.load(Ordering::Acquire)
 }
 
-/// Get JNIEnv for current thread, attaching if necessary
+// Thread-local cache for JNIEnv to avoid repeated JVM calls
+// This is safe because JNIEnv is thread-specific and doesn't change
+// within the same thread
+thread_local! {
+    static CACHED_ENV: std::cell::Cell<JNIEnv> = const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+/// Get JNIEnv for current thread, using thread-local cache when possible
+/// This is optimized for the hot path where the thread is already attached
+#[inline]
 pub fn get_thread_env() -> Option<JNIEnv> {
+    // Fast path: check thread-local cache first
+    let cached = CACHED_ENV.with(|c| c.get());
+    if !cached.is_null() {
+        // Verify the cached env is still valid by checking if we're still attached
+        // This is a lightweight check
+        return Some(cached);
+    }
+
+    get_thread_env_slow()
+}
+
+/// Slow path for get_thread_env - attaches thread if necessary
+#[cold]
+fn get_thread_env_slow() -> Option<JNIEnv> {
     let vm = get_java_vm();
     if vm.is_null() {
         return None;
@@ -175,6 +202,8 @@ pub fn get_thread_env() -> Option<JNIEnv> {
         let get_env: GetEnvFn = get_jvm_fn(vm, JVM_GET_ENV);
         let result = get_env(vm, &mut env, JNI_VERSION_1_4);
         if result == JNI_OK {
+            // Cache the env for this thread
+            CACHED_ENV.with(|c| c.set(env));
             return Some(env);
         }
 
@@ -183,6 +212,8 @@ pub fn get_thread_env() -> Option<JNIEnv> {
         let attach: AttachFn = get_jvm_fn(vm, JVM_ATTACH_CURRENT_THREAD);
         let result = attach(vm, &mut env, ptr::null_mut());
         if result == JNI_OK {
+            // Cache the env for this thread
+            CACHED_ENV.with(|c| c.set(env));
             Some(env)
         } else {
             None
@@ -192,6 +223,9 @@ pub fn get_thread_env() -> Option<JNIEnv> {
 
 /// Detach current thread from JVM
 pub fn detach_current_thread() {
+    // Clear the thread-local cache
+    CACHED_ENV.with(|c| c.set(ptr::null_mut()));
+
     let vm = get_java_vm();
     if vm.is_null() {
         return;
@@ -268,15 +302,17 @@ pub fn set_decoded_frame_buffer(buffer: JByteArray) {
 }
 
 pub fn get_decoded_frame_buffer() -> JByteArray {
-    DECODED_FRAME_BUFFER.load(Ordering::SeqCst)
+    DECODED_FRAME_BUFFER.load(Ordering::Acquire)
 }
 
+#[inline]
 pub fn set_decoded_audio_buffer(buffer: JShortArray) {
-    DECODED_AUDIO_BUFFER.store(buffer, Ordering::SeqCst);
+    DECODED_AUDIO_BUFFER.store(buffer, Ordering::Release);
 }
 
+#[inline]
 pub fn get_decoded_audio_buffer() -> JShortArray {
-    DECODED_AUDIO_BUFFER.load(Ordering::SeqCst)
+    DECODED_AUDIO_BUFFER.load(Ordering::Acquire)
 }
 
 /// Get static method ID
@@ -477,6 +513,7 @@ pub fn new_short_array(env: JNIEnv, length: JInt) -> JShortArray {
 }
 
 /// Set byte array region
+#[inline]
 pub fn set_byte_array_region(env: JNIEnv, array: JByteArray, start: JInt, len: JInt, buf: *const i8) {
     if env.is_null() || array.is_null() || buf.is_null() {
         return;

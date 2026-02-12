@@ -8,28 +8,27 @@ use crate::jni_helpers::*;
 use crate::opus::*;
 use libc::{c_char, c_int, c_void};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use log::{info, error, debug};
 
 // Global state for callbacks
 static OPUS_DECODER: AtomicPtr<OpusMSDecoder> = AtomicPtr::new(ptr::null_mut());
 static mut OPUS_CONFIG: Option<OPUS_MULTISTREAM_CONFIGURATION> = None;
 
-// Audio sample counter for debugging
-static AUDIO_SAMPLE_COUNT: AtomicU64 = AtomicU64::new(0);
-
 // Flag to indicate if JNI callbacks are enabled
 static JNI_CALLBACKS_ENABLED: AtomicBool = AtomicBool::new(false);
 
 /// Enable or disable JNI callbacks
+#[inline]
 pub fn set_jni_callbacks(enabled: bool) {
-    JNI_CALLBACKS_ENABLED.store(enabled, Ordering::SeqCst);
+    JNI_CALLBACKS_ENABLED.store(enabled, Ordering::Release);
     info!("JNI callbacks {}", if enabled { "enabled" } else { "disabled" });
 }
 
 /// Check if JNI callbacks are enabled
+#[inline]
 pub fn jni_callbacks_enabled() -> bool {
-    JNI_CALLBACKS_ENABLED.load(Ordering::SeqCst)
+    JNI_CALLBACKS_ENABLED.load(Ordering::Acquire)
 }
 
 // ============================================================================
@@ -382,7 +381,7 @@ pub extern "C" fn bridge_ar_cleanup() {
 }
 
 pub extern "C" fn bridge_ar_decode_and_play_sample(sample_data: *mut c_char, sample_length: c_int) {
-    let decoder = OPUS_DECODER.load(Ordering::SeqCst);
+    let decoder = OPUS_DECODER.load(Ordering::Acquire);
     if decoder.is_null() {
         return;
     }
@@ -430,26 +429,7 @@ pub extern "C" fn bridge_ar_decode_and_play_sample(sample_data: *mut c_char, sam
         )
     };
 
-    // Log every 100th sample for debugging
-    let count = AUDIO_SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed);
-    if count % 100 == 0 {
-        if sample_data.is_null() {
-            debug!("Audio PLC (packet loss concealment): decode_len={}, expected_samples={}",
-                   decode_len, config.samplesPerFrame);
-        } else {
-            debug!("Audio decode: sample_len={}, decode_len={}, expected_samples={}, channels={}",
-                   sample_length, decode_len, config.samplesPerFrame, config.channelCount);
-        }
-    }
-
     if decode_len > 0 {
-        // Debug: Check first few samples to verify audio data is valid (before release)
-        if count % 500 == 0 {
-            // Sample a few values to check data validity
-            let sample_count = (decode_len * config.channelCount) as usize;
-            let samples = unsafe { std::slice::from_raw_parts(decoded_data, sample_count.min(8)) };
-            debug!("Audio samples [0..8]: {:?}", samples);
-        }
 
         // Release the array before making JNI calls (commit changes with mode 0)
         release_primitive_array_critical(env, audio_buffer, decoded_data as *mut c_void, 0);

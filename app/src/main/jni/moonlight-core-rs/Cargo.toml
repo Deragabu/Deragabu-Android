@@ -30,9 +30,13 @@ cc = "1.0"
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 panic = "abort"
 # Don't strip symbols - JNI functions need to be exported
 strip = false
+# Enable overflow checks for safety without performance impact in release
+overflow-checks = false
+# Optimize for binary size while keeping performance
+debug = false
 

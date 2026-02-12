@@ -89,7 +89,7 @@ pub extern "C" fn Java_com_limelight_nvstream_jni_MoonBridge_init(
 
     // Store JavaVM using jni_helpers
     if let Some(vm) = jni_helpers::get_java_vm_from_env(env) {
-        JAVA_VM.store(vm, Ordering::SeqCst);
+        JAVA_VM.store(vm, Ordering::Release);
         jni_helpers::set_java_vm(vm);
         debug!("JavaVM stored successfully");
     } else {
@@ -99,7 +99,7 @@ pub extern "C" fn Java_com_limelight_nvstream_jni_MoonBridge_init(
     // Store MoonBridge class as global reference
     let global_class = jni_helpers::new_global_ref(env, clazz);
     if !global_class.is_null() {
-        MOON_BRIDGE_CLASS.store(global_class, Ordering::SeqCst);
+        MOON_BRIDGE_CLASS.store(global_class, Ordering::Release);
         debug!("MoonBridge class stored successfully");
     } else {
         error!("Failed to create global reference for MoonBridge class");
