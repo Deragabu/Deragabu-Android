@@ -10,8 +10,8 @@ import android.view.InputDevice;
 
 public class Xbox360WirelessDongle extends AbstractController {
     private static final String TAG = "Xbox360WirelessDongle";
-    private UsbDevice device;
-    private UsbDeviceConnection connection;
+    private final UsbDevice device;
+    private final UsbDeviceConnection connection;
 
     private static final int XB360W_IFACE_SUBCLASS = 93;
     private static final int XB360W_IFACE_PROTOCOL = 129; // Wireless only

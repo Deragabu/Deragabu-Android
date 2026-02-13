@@ -74,7 +74,6 @@ public class Xbox360Controller extends AbstractXboxController {
     protected boolean handleRead(ByteBuffer buffer) {
         if (buffer.remaining() < 14) {
             Log.w(TAG, "Read too small: "+buffer.remaining());
-            //LimeLog.severe("Read too small: "+buffer.remaining());
             return false;
         }
 
@@ -132,7 +131,6 @@ public class Xbox360Controller extends AbstractXboxController {
         int res = connection.bulkTransfer(outEndpt, commandBuffer, commandBuffer.length, 3000);
         if (res != commandBuffer.length) {
             Log.w(TAG, "LED set transfer failed: "+res);
-            //LimeLog.warning("LED set transfer failed: "+res);
         }
 
     }
@@ -155,7 +153,6 @@ public class Xbox360Controller extends AbstractXboxController {
         };
         int res = connection.bulkTransfer(outEndpt, data, data.length, 100);
         if (res != data.length) {
-            //LimeLog.warning("Rumble transfer failed: "+res);
             Log.e(TAG, "Rumble transfer failed: "+res);
         }
     }
