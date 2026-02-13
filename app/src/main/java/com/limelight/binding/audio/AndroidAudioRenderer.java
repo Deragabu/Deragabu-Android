@@ -22,14 +22,12 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
     // Audio latency control constants
     private static final int MAX_PENDING_AUDIO_MS = 120;  // Maximum pending audio before dropping
-    private static final int TARGET_PENDING_AUDIO_MS = 80; // Target latency for recovery
-    private static final int MIN_BUFFER_MS = 20;           // Minimum buffer to maintain
+    private static final int TARGET_PENDING_AUDIO_MS = 80; // Target latency for recovery// Minimum buffer to maintain
     private int consecutiveDrops = 0;
 
     // Fade parameters for smooth audio transitions (reduces pops/clicks)
     private static final int FADE_SAMPLES = 64;  // Number of samples for fade in/out
     private boolean needsFadeIn = false;
-    private short[] lastAudioFrame = null;
 
     public AndroidAudioRenderer(Context context, boolean enableAudioFx) {
         this.context = context;
@@ -221,8 +219,6 @@ public class AndroidAudioRenderer implements AudioRenderer {
             consecutiveDrops = 0;
         }
 
-        // Store reference for potential crossfade (optional future enhancement)
-        lastAudioFrame = audioData;
 
         // This will block until the write is completed.
         track.write(audioData, 0, audioData.length);
@@ -246,7 +242,6 @@ public class AndroidAudioRenderer implements AudioRenderer {
         // Reset audio state
         consecutiveDrops = 0;
         needsFadeIn = false;
-        lastAudioFrame = null;
 
         if (enableAudioFx) {
             // Open an audio effect control session to allow equalizers to apply audio effects
