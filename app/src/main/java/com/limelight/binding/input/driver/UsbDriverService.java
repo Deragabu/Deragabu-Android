@@ -142,11 +142,9 @@ public class UsbDriverService extends Service implements UsbDriverListener {
                 " Interfaces: " + device.getInterfaceCount());
         // Are we able to operate it?
         if (shouldClaimDevice(device, prefConfig.bindAllUsb)) {
-            //LimeLog.info("Device can be claimed, checking permission...");
             Log.i(TAG, "Device can be claimed, checking permission...");
             // Do we have permission yet?
             if (!usbManager.hasPermission(device)) {
-                //LimeLog.info("No permission, requesting...");
                 Log.i(TAG, "No permission, requesting...");
                 // Let's ask for permission
                 try {
