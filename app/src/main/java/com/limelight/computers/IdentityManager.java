@@ -8,8 +8,10 @@ import java.util.Locale;
 import java.util.Random;
 
 import android.content.Context;
+import android.util.Log;
 
 public class IdentityManager {
+    private final static String TAG = "IdentityManager";
     private static final String UNIQUE_ID_FILE_NAME = "uniqueid";
     private static final int UID_SIZE_IN_BYTES = 8;
 
@@ -20,8 +22,7 @@ public class IdentityManager {
         if (uniqueId == null) {
             uniqueId = generateNewUniqueId(c);
         }
-
-        LimeLog.info("UID is now: "+uniqueId);
+        Log.i(TAG, "UID is now: "+uniqueId);
     }
 
     public String getUniqueId() {
@@ -31,38 +32,34 @@ public class IdentityManager {
     private static String loadUniqueId(Context c) {
         // 2 Hex digits per byte
         char[] uid = new char[UID_SIZE_IN_BYTES * 2];
-        LimeLog.info("Reading UID from disk");
+        Log.i(TAG, "Attempting to load UID from disk");
         try (final InputStreamReader reader =
                      new InputStreamReader(c.openFileInput(UNIQUE_ID_FILE_NAME))
         ) {
             if (reader.read(uid) != UID_SIZE_IN_BYTES * 2) {
-                LimeLog.severe("UID file data is truncated");
+                Log.w(TAG, "UID file data is truncated");
                 return null;
             }
             return new String(uid);
         } catch (FileNotFoundException e) {
-            LimeLog.info("No UID file found");
+            Log.i(TAG, "UID file not found, will generate a new one");
             return null;
         } catch (IOException e) {
-            LimeLog.severe("Error while reading UID file");
-            e.printStackTrace();
+            Log.e(TAG, "Error while reading UID file",e);
             return null;
         }
     }
 
     private static String generateNewUniqueId(Context c) {
-        // Generate a new UID hex string
-        LimeLog.info("Generating new UID");
-        String uidStr = String.format((Locale)null, "%016x", new Random().nextLong());
+        // Generate a new UID hex string with 2 hex digits per byte, and a random long is 8 bytes, so 16 hex digits total
+        @SuppressWarnings("DataFlowIssue") String uidStr = String.format((Locale)null, "%016x", new Random().nextLong());
 
         try (final OutputStreamWriter writer =
                      new OutputStreamWriter(c.openFileOutput(UNIQUE_ID_FILE_NAME, 0))
         ) {
             writer.write(uidStr);
-            LimeLog.info("UID written to disk");
         } catch (IOException e) {
-            LimeLog.severe("Error while writing UID file");
-            e.printStackTrace();
+            Log.e(TAG, "Error while writing UID file",e);
         }
 
         // We can return a UID even if I/O fails

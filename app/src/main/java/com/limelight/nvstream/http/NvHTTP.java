@@ -1,5 +1,8 @@
 package com.limelight.nvstream.http;
 
+import android.annotation.SuppressLint;
+import android.util.Log;
+
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -57,8 +60,9 @@ import okhttp3.ResponseBody;
 
 
 public class NvHTTP {
-    private String uniqueId;
-    private PairingManager pm;
+    private static final String TAG = "NvHTTP";
+    private final String uniqueId;
+    private final PairingManager pm;
 
     private static final int DEFAULT_HTTPS_PORT = 47984;
     public static final int DEFAULT_HTTP_PORT = 47989;
@@ -67,12 +71,11 @@ public class NvHTTP {
     public static final int READ_TIMEOUT = 7000;
 
     // Print URL and content to logcat on debug builds
-    private static boolean verbose = BuildConfig.DEBUG;
 
-    private HttpUrl baseUrlHttp;
+    private final HttpUrl baseUrlHttp;
 
     private int httpsPort;
-    
+
     private OkHttpClient httpClientLongConnectTimeout;
     private OkHttpClient httpClientLongConnectNoReadTimeout;
     private OkHttpClient httpClientShortConnectTimeout;
@@ -96,29 +99,41 @@ public class NvHTTP {
                     return (X509TrustManager) tm;
                 }
             }
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        } catch (KeyStoreException e) {
+        } catch (NoSuchAlgorithmException | KeyStoreException e) {
             throw new RuntimeException(e);
         }
 
         throw new IllegalStateException("No X509 trust manager found");
     }
 
+    @SuppressLint("CustomX509TrustManager")
     private void initializeHttpState(final LimelightCryptoProvider cryptoProvider) {
         keyManager = new X509KeyManager() {
             public String chooseClientAlias(String[] keyTypes,
-                    Principal[] issuers, Socket socket) { return "Limelight-RSA"; }
-            public String chooseServerAlias(String keyType, Principal[] issuers,
-                    Socket socket) { return null; }
-            public X509Certificate[] getCertificateChain(String alias) {
-                return new X509Certificate[] {cryptoProvider.getClientCertificate()};
+                                            Principal[] issuers, Socket socket) {
+                return "Limelight-RSA";
             }
-            public String[] getClientAliases(String keyType, Principal[] issuers) { return null; }
+
+            public String chooseServerAlias(String keyType, Principal[] issuers,
+                                            Socket socket) {
+                return null;
+            }
+
+            public X509Certificate[] getCertificateChain(String alias) {
+                return new X509Certificate[]{cryptoProvider.getClientCertificate()};
+            }
+
+            public String[] getClientAliases(String keyType, Principal[] issuers) {
+                return null;
+            }
+
             public PrivateKey getPrivateKey(String alias) {
                 return cryptoProvider.getClientPrivateKey();
             }
-            public String[] getServerAliases(String keyType, Principal[] issuers) { return null; }
+
+            public String[] getServerAliases(String keyType, Principal[] issuers) {
+                return null;
+            }
         };
 
         defaultTrustManager = getDefaultTrustManager();
@@ -126,9 +141,11 @@ public class NvHTTP {
             public X509Certificate[] getAcceptedIssuers() {
                 return new X509Certificate[0];
             }
+
             public void checkClientTrusted(X509Certificate[] certs, String authType) {
                 throw new IllegalStateException("Should never be called");
             }
+
             public void checkServerTrusted(X509Certificate[] certs, String authType) throws CertificateException {
                 try {
                     // Try the default trust manager first to allow pairing with certificates
@@ -141,8 +158,7 @@ public class NvHTTP {
                         if (!certs[0].equals(NvHTTP.this.serverCert)) {
                             throw new CertificateException("Certificate mismatch");
                         }
-                    }
-                    else {
+                    } else {
                         // The cert chain doesn't look like a self-signed cert or we don't have
                         // a certificate pinned, so re-throw the original validation error.
                         throw e;
@@ -160,7 +176,7 @@ public class NvHTTP {
                         return true;
                     }
                 } catch (SSLPeerUnverifiedException e) {
-                    e.printStackTrace();
+                    Log.e(TAG, "Hostname verification failed: could not verify peer certificate", e);
                 }
 
                 // Fall back to default HostnameVerifier for validating CA-issued certs
@@ -194,7 +210,7 @@ public class NvHTTP {
 
         return new HttpUrl.Builder().scheme("https").host(baseUrlHttp.host()).port(httpsPort).build();
     }
-    
+
     public NvHTTP(ComputerDetails.AddressTuple address, int httpsPort, String uniqueId, X509Certificate serverCert, LimelightCryptoProvider cryptoProvider) throws IOException {
         // Use the same UID for all Moonlight clients so we can quit games
         // started by other Moonlight clients.
@@ -215,10 +231,11 @@ public class NvHTTP {
             if (addressString.contains(":") && addressString.contains(".")) {
                 InetAddress addr = InetAddress.getByName(addressString);
                 if (addr instanceof Inet4Address) {
-                    addressString = ((Inet4Address)addr).getHostAddress();
+                    addressString = addr.getHostAddress();
                 }
             }
 
+            assert addressString != null;
             this.baseUrlHttp = new HttpUrl.Builder()
                     .scheme("http")
                     .host(addressString)
@@ -240,23 +257,23 @@ public class NvHTTP {
         xpp.setInput(r);
         int eventType = xpp.getEventType();
         Stack<String> currentTag = new Stack<String>();
-        
+
         while (eventType != XmlPullParser.END_DOCUMENT) {
             switch (eventType) {
-            case (XmlPullParser.START_TAG):
-                if (xpp.getName().equals("root")) {
-                    verifyResponseStatus(xpp);
-                }
-                currentTag.push(xpp.getName());
-                break;
-            case (XmlPullParser.END_TAG):
-                currentTag.pop();
-                break;
-            case (XmlPullParser.TEXT):
-                if (currentTag.peek().equals(tagname)) {
-                    return xpp.getText();
-                }
-                break;
+                case (XmlPullParser.START_TAG):
+                    if (xpp.getName().equals("root")) {
+                        verifyResponseStatus(xpp);
+                    }
+                    currentTag.push(xpp.getName());
+                    break;
+                case (XmlPullParser.END_TAG):
+                    currentTag.pop();
+                    break;
+                case (XmlPullParser.TEXT):
+                    if (currentTag.peek().equals(tagname)) {
+                        return xpp.getText();
+                    }
+                    break;
             }
             eventType = xpp.next();
         }
@@ -266,7 +283,7 @@ public class NvHTTP {
             // We could also throw an IOException, but some callers expect those in cases where the
             // host may not be reachable. We want to distinguish unreachable hosts vs. hosts that
             // are returning garbage XML to us, so we use XmlPullParserException instead.
-            throw new XmlPullParserException("Missing mandatory field in host response: "+tagname);
+            throw new XmlPullParserException("Missing mandatory field in host response: " + tagname);
         }
 
         return null;
@@ -275,13 +292,13 @@ public class NvHTTP {
     static String getXmlString(String str, String tagname, boolean throwIfMissing) throws XmlPullParserException, IOException {
         return getXmlString(new StringReader(str), tagname, throwIfMissing);
     }
-    
+
     private static void verifyResponseStatus(XmlPullParser xpp) throws HostHttpResponseException {
         // We use Long.parseLong() because in rare cases GFE can send back a status code of
         // 0xFFFFFFFF, which will cause Integer.parseInt() to throw a NumberFormatException due
         // to exceeding Integer.MAX_VALUE. We'll get the desired error code of -1 by just casting
         // the resulting long into an int.
-        int statusCode = (int)Long.parseLong(xpp.getAttributeValue(XmlPullParser.NO_NAMESPACE, "status_code"));
+        int statusCode = (int) Long.parseLong(xpp.getAttributeValue(XmlPullParser.NO_NAMESPACE, "status_code"));
         if (statusCode != 200) {
             String statusMsg = xpp.getAttributeValue(XmlPullParser.NO_NAMESPACE, "status_message");
             if (statusCode == -1 && "Invalid".equals(statusMsg)) {
@@ -293,15 +310,14 @@ public class NvHTTP {
             throw new HostHttpResponseException(statusCode, statusMsg);
         }
     }
-    
+
     public String getServerInfo(boolean likelyOnline) throws IOException, XmlPullParserException {
         String resp;
 
         // If we believe the PC is online, give it a little extra time to respond
         OkHttpClient client = likelyOnline ? httpClientLongConnectTimeout : httpClientShortConnectTimeout;
-        
-        //
-        // TODO: Shield Hub uses HTTP for this and is able to get an accurate PairStatus with HTTP.
+
+        // We want to use HTTPS to fetch serverinfo if we have a pinned cert because that will allow us to detect if the cert is invalid and fall back to pairing again to update the cert. However, some versions of GFE have a bug where they fail to respond to serverinfo requests over HTTPS if the client isn't already paired, even if the client has a valid pinned cert. In that case, we'll fall back to HTTP for fetching serverinfo until we can pair and update the cert.
         // For some reason, we always see PairStatus is 0 over HTTP and only 1 over HTTPS. It looks
         // like there are extra request headers required to make this stuff work over HTTP.
         //
@@ -317,8 +333,7 @@ public class NvHTTP {
                         // Jump to the GfeHttpResponseException exception handler to retry
                         // over HTTP which will allow us to pair again to update the cert
                         throw new HostHttpResponseException(401, "Server certificate mismatch");
-                    }
-                    else {
+                    } else {
                         throw e;
                     }
                 }
@@ -326,8 +341,7 @@ public class NvHTTP {
                 // This will throw an exception if the request came back with a failure status.
                 // We want this because it will throw us into the HTTP case if the client is unpaired.
                 getServerVersion(resp);
-            }
-            catch (HostHttpResponseException e) {
+            } catch (HostHttpResponseException e) {
                 if (e.getErrorCode() == 401) {
                     // Cert validation error - fall back to HTTP
                     return openHttpConnectionToString(client, baseUrlHttp, "serverinfo");
@@ -338,8 +352,7 @@ public class NvHTTP {
             }
 
             return resp;
-        }
-        else {
+        } else {
             // No pinned cert, so use HTTP
             return openHttpConnectionToString(client, baseUrlHttp, "serverinfo");
         }
@@ -386,7 +399,7 @@ public class NvHTTP {
 
         return details;
     }
-    
+
     public ComputerDetails getComputerDetails(boolean likelyOnline) throws IOException, XmlPullParserException {
         return getComputerDetails(getServerInfo(likelyOnline));
     }
@@ -398,7 +411,7 @@ public class NvHTTP {
         // to avoid the SSLv3 fallback that causes connection failures
         try {
             SSLContext sc = SSLContext.getInstance("TLS");
-            sc.init(new KeyManager[] { keyManager }, new TrustManager[] { trustManager }, new SecureRandom());
+            sc.init(new KeyManager[]{keyManager}, new TrustManager[]{trustManager}, new SecureRandom());
             return client.newBuilder().sslSocketFactory(sc.getSocketFactory(), trustManager).build();
         } catch (NoSuchAlgorithmException | KeyManagementException e) {
             throw new RuntimeException(e);
@@ -433,8 +446,7 @@ public class NvHTTP {
         } catch (Throwable t) {
             // Handle InterruptedException from OkHttp's internal connection handling
             // OkHttp may throw InterruptedException directly in some edge cases
-            if (t instanceof InterruptedException ||
-                (t.getCause() != null && t.getCause() instanceof InterruptedException)) {
+            if (t.getCause() != null && t.getCause() instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
                 throw new InterruptedIOException("HTTP request interrupted");
             }
@@ -442,18 +454,17 @@ public class NvHTTP {
         }
 
         ResponseBody body = response.body();
-        
+
         if (response.isSuccessful()) {
             return body;
         }
-        
+
         // Unsuccessful, so close the response body
         body.close();
 
         if (response.code() == 404) {
             throw new FileNotFoundException(completeUrl.toString());
-        }
-        else {
+        } else {
             throw new HostHttpResponseException(response.code(), response.message());
         }
     }
@@ -468,17 +479,11 @@ public class NvHTTP {
             String respString = resp.string();
             resp.close();
 
-            if (verbose && !path.equals("serverinfo")) {
-                LimeLog.info(getCompleteUrl(baseUrl, path, query)+" -> "+respString);
-            }
+            Log.i(TAG, "openHttpConnectionToString: " + getCompleteUrl(baseUrl, path, query) + " -> " + respString);
 
             return respString;
         } catch (IOException e) {
-            if (verbose && !path.equals("serverinfo")) {
-                LimeLog.warning(getCompleteUrl(baseUrl, path, query)+" -> "+e.getMessage());
-                e.printStackTrace();
-            }
-            
+            Log.e(TAG, "openHttpConnectionToString: " + e.getMessage(), e);
             throw e;
         }
     }
@@ -497,7 +502,7 @@ public class NvHTTP {
         return NvHTTP.getXmlString(serverInfo, "PairStatus", true).equals("1") ?
                 PairState.PAIRED : PairState.NOT_PAIRED;
     }
-    
+
     public long getMaxLumaPixelsH264(String serverInfo) throws XmlPullParserException, IOException {
         // MaxLumaPixelsH264 wasn't present on old GFE versions
         String str = getXmlString(serverInfo, "MaxLumaPixelsH264", false);
@@ -507,7 +512,7 @@ public class NvHTTP {
             return 0;
         }
     }
-    
+
     public long getMaxLumaPixelsHEVC(String serverInfo) throws XmlPullParserException, IOException {
         // MaxLumaPixelsHEVC wasn't present on old GFE versions
         String str = getXmlString(serverInfo, "MaxLumaPixelsHEVC", false);
@@ -535,7 +540,7 @@ public class NvHTTP {
             return 0;
         }
     }
-    
+
     public String getGpuType(String serverInfo) throws XmlPullParserException, IOException {
         // ServerCodecModeSupport wasn't present on old GFE versions
         return getXmlString(serverInfo, "gputype", false);
@@ -545,7 +550,7 @@ public class NvHTTP {
         // ServerCodecModeSupport wasn't present on old GFE versions
         return getXmlString(serverInfo, "GfeVersion", false);
     }
-    
+
     public boolean supports4K(String serverInfo) throws XmlPullParserException, IOException {
         // Only allow 4K on GFE 3.x. GfeVersion wasn't present on very old versions of GFE.
         String gfeVersionStr = getXmlString(serverInfo, "GfeVersion", false);
@@ -558,8 +563,7 @@ public class NvHTTP {
         // as possible, we'll force the current game to zero if the server isn't in a streaming session.
         if (getXmlString(serverInfo, "state", true).endsWith("_SERVER_BUSY")) {
             return Integer.parseInt(getXmlString(serverInfo, "currentgame", true));
-        }
-        else {
+        } else {
             return 0;
         }
     }
@@ -568,7 +572,7 @@ public class NvHTTP {
         try {
             return Integer.parseInt(getXmlString(serverInfo, "HttpsPort", true));
         } catch (XmlPullParserException | IOException e) {
-            e.printStackTrace();
+            Log.e(TAG, "getHttpsPort: " + e.getMessage(), e);
             return DEFAULT_HTTPS_PORT;
         }
     }
@@ -582,16 +586,17 @@ public class NvHTTP {
             // Expected on non-Sunshine servers
             return baseUrlHttp.port();
         } catch (IOException e) {
-            e.printStackTrace();
+            Log.e(TAG, "getExternalPort: "+e.getMessage(),e );
             return baseUrlHttp.port();
         }
     }
 
     /**
      * Get an app by ID
+     *
      * @param appId The ID of the app
-     * @see #getAppByName(String) for alternative.
      * @return app details, or null if no app with that ID exists
+     * @see #getAppByName(String) for alternative.
      */
     public NvApp getAppById(int appId) throws IOException, XmlPullParserException {
         LinkedList<NvApp> appList = getAppList();
@@ -608,9 +613,10 @@ public class NvHTTP {
      * NOTE: It is perfectly valid for multiple apps to have the same name,
      * this function will only return the first one it finds.
      * Consider using getAppById instead.
+     *
      * @param appName The name of the app
-     * @see #getAppById(int) for alternative.
      * @return app details, or null if no app with that name exists
+     * @see #getAppById(int) for alternative.
      */
     public NvApp getAppByName(String appName) throws IOException, XmlPullParserException {
         LinkedList<NvApp> appList = getAppList();
@@ -625,7 +631,7 @@ public class NvHTTP {
     public PairingManager getPairingManager() {
         return pm;
     }
-    
+
     public static LinkedList<NvApp> getAppListByReader(Reader r) throws XmlPullParserException, IOException {
         XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
         factory.setNamespaceAware(true);
@@ -639,77 +645,70 @@ public class NvHTTP {
 
         while (eventType != XmlPullParser.END_DOCUMENT) {
             switch (eventType) {
-            case (XmlPullParser.START_TAG):
-                if (xpp.getName().equals("root")) {
-                    verifyResponseStatus(xpp);
-                }
-                currentTag.push(xpp.getName());
-                if (xpp.getName().equals("App")) {
-                    appList.addLast(new NvApp());
-                }
-                break;
-            case (XmlPullParser.END_TAG):
-                currentTag.pop();
-                if (xpp.getName().equals("root")) {
-                    rootTerminated = true;
-                }
-                break;
-            case (XmlPullParser.TEXT):
-                NvApp app = appList.getLast();
-                if (currentTag.peek().equals("AppTitle")) {
-                    app.setAppName(xpp.getText());
-                } else if (currentTag.peek().equals("ID")) {
-                    app.setAppId(xpp.getText());
-                } else if (currentTag.peek().equals("IsHdrSupported")) {
-                    app.setHdrSupported(xpp.getText().equals("1"));
-                }
-                break;
+                case (XmlPullParser.START_TAG):
+                    if (xpp.getName().equals("root")) {
+                        verifyResponseStatus(xpp);
+                    }
+                    currentTag.push(xpp.getName());
+                    if (xpp.getName().equals("App")) {
+                        appList.addLast(new NvApp());
+                    }
+                    break;
+                case (XmlPullParser.END_TAG):
+                    currentTag.pop();
+                    if (xpp.getName().equals("root")) {
+                        rootTerminated = true;
+                    }
+                    break;
+                case (XmlPullParser.TEXT):
+                    NvApp app = appList.getLast();
+                    if (currentTag.peek().equals("AppTitle")) {
+                        app.setAppName(xpp.getText());
+                    } else if (currentTag.peek().equals("ID")) {
+                        app.setAppId(xpp.getText());
+                    } else if (currentTag.peek().equals("IsHdrSupported")) {
+                        app.setHdrSupported(xpp.getText().equals("1"));
+                    }
+                    break;
             }
             eventType = xpp.next();
         }
-        
+
         // Throw a malformed XML exception if we've not seen the root tag ended
         if (!rootTerminated) {
             throw new XmlPullParserException("Malformed XML: Root tag was not terminated");
         }
-        
+
         // Ensure that all apps in the list are initialized
         ListIterator<NvApp> i = appList.listIterator();
         while (i.hasNext()) {
             NvApp app = i.next();
-            
+
             // Remove uninitialized apps
             if (!app.isInitialized()) {
-                LimeLog.warning("GFE returned incomplete app: "+app.getAppId()+" "+app.getAppName());
+                Log.w(TAG, "GFE returned incomplete app: " + app.getAppId() + " " + app.getAppName());
                 i.remove();
             }
         }
-        
+
         return appList;
     }
-    
+
     public String getAppListRaw() throws IOException {
         return openHttpConnectionToString(httpClientLongConnectTimeout, getHttpsUrl(true), "applist");
     }
-    
-    public LinkedList<NvApp> getAppList() throws HostHttpResponseException, IOException, XmlPullParserException {
-        if (verbose) {
+
+    public LinkedList<NvApp> getAppList() throws IOException, XmlPullParserException {
             // Use the raw function so the app list is printed
             return getAppListByReader(new StringReader(getAppListRaw()));
-        }
-        else {
-            try (final ResponseBody resp = openHttpConnection(httpClientLongConnectTimeout, getHttpsUrl(true))) {
-                return getAppListByReader(new InputStreamReader(resp.byteStream()));
-            }
-        }
     }
 
-    String executePairingCommand(String additionalArguments, boolean enableReadTimeout) throws HostHttpResponseException, IOException {
+    String executePairingCommand(String additionalArguments, boolean enableReadTimeout) throws IOException {
         return openHttpConnectionToString(enableReadTimeout ? httpClientLongConnectTimeout : httpClientLongConnectNoReadTimeout,
                 baseUrlHttp, "pair", "devicename=roth&updateState=1&" + additionalArguments);
     }
 
-    String executePairingChallenge() throws HostHttpResponseException, IOException {
+    String executePairingChallenge() throws IOException {
         return openHttpConnectionToString(httpClientLongConnectTimeout, getHttpsUrl(true),
                 "pair", "devicename=roth&updateState=1&phrase=pairchallenge");
     }
@@ -717,16 +716,16 @@ public class NvHTTP {
     public void unpair() throws IOException {
         openHttpConnectionToString(httpClientLongConnectTimeout, baseUrlHttp, "unpair");
     }
-    
+
     public InputStream getBoxArt(NvApp app) throws IOException {
         ResponseBody resp = openHttpConnection(httpClientLongConnectTimeout, getHttpsUrl(true), "appasset", "appid=" + app.getAppId() + "&AssetType=2&AssetIdx=0");
         return resp.byteStream();
     }
-    
+
     public int getServerMajorVersion(String serverInfo) throws XmlPullParserException, IOException {
         return getServerAppVersionQuad(serverInfo)[0];
     }
-    
+
     public int[] getServerAppVersionQuad(String serverInfo) throws XmlPullParserException, IOException {
         String serverVersion = getServerVersion(serverInfo);
         if (serverVersion == null) {
@@ -734,7 +733,7 @@ public class NvHTTP {
         }
         String[] serverVersionSplit = serverVersion.split("\\.");
         if (serverVersionSplit.length != 4) {
-            throw new IllegalArgumentException("Malformed server version field: "+serverVersion);
+            throw new IllegalArgumentException("Malformed server version field: " + serverVersion);
         }
         int[] ret = new int[serverVersionSplit.length];
         for (int i = 0; i < ret.length; i++) {
@@ -744,44 +743,44 @@ public class NvHTTP {
     }
 
     final private static char[] hexArray = "0123456789ABCDEF".toCharArray();
+
     private static String bytesToHex(byte[] bytes) {
         char[] hexChars = new char[bytes.length * 2];
-        for ( int j = 0; j < bytes.length; j++ ) {
+        for (int j = 0; j < bytes.length; j++) {
             int v = bytes[j] & 0xFF;
             hexChars[j * 2] = hexArray[v >>> 4];
             hexChars[j * 2 + 1] = hexArray[v & 0x0F];
         }
         return new String(hexChars);
     }
-    
+
     public boolean launchApp(ConnectionContext context, String verb, int appId, boolean enableHdr) throws IOException, XmlPullParserException {
         int fps = context.streamConfig.getLaunchRefreshRate();
         boolean enableSops = context.streamConfig.getSops();
 
         String xmlStr = openHttpConnectionToString(httpClientLongConnectNoReadTimeout, getHttpsUrl(true), verb,
-            "appid=" + appId +
-            "&mode=" + context.negotiatedWidth + "x" + context.negotiatedHeight + "x" + fps +
-            "&additionalStates=1&sops=" + (enableSops ? 1 : 0) +
-            "&rikey="+bytesToHex(context.riKey.getEncoded()) +
-            "&rikeyid="+context.riKeyId +
-            (!enableHdr ? "" : "&hdrMode=1&clientHdrCapVersion=0&clientHdrCapSupportedFlagsInUint32=0&clientHdrCapMetaDataId=NV_STATIC_METADATA_TYPE_1&clientHdrCapDisplayData=0x0x0x0x0x0x0x0x0x0x0") +
-            "&localAudioPlayMode=" + (context.streamConfig.getPlayLocalAudio() ? 1 : 0) +
-            "&surroundAudioInfo=" + context.streamConfig.getAudioConfiguration().getSurroundAudioInfo() +
-            "&remoteControllersBitmap=" + context.streamConfig.getAttachedGamepadMask() +
-            "&gcmap=" + context.streamConfig.getAttachedGamepadMask() +
-            "&gcpersist="+(context.streamConfig.getPersistGamepadsAfterDisconnect() ? 1 : 0) +
-            MoonBridge.getLaunchUrlQueryParameters());
+                "appid=" + appId +
+                        "&mode=" + context.negotiatedWidth + "x" + context.negotiatedHeight + "x" + fps +
+                        "&additionalStates=1&sops=" + (enableSops ? 1 : 0) +
+                        "&rikey=" + bytesToHex(context.riKey.getEncoded()) +
+                        "&rikeyid=" + context.riKeyId +
+                        (!enableHdr ? "" : "&hdrMode=1&clientHdrCapVersion=0&clientHdrCapSupportedFlagsInUint32=0&clientHdrCapMetaDataId=NV_STATIC_METADATA_TYPE_1&clientHdrCapDisplayData=0x0x0x0x0x0x0x0x0x0x0") +
+                        "&localAudioPlayMode=" + (context.streamConfig.getPlayLocalAudio() ? 1 : 0) +
+                        "&surroundAudioInfo=" + context.streamConfig.getAudioConfiguration().getSurroundAudioInfo() +
+                        "&remoteControllersBitmap=" + context.streamConfig.getAttachedGamepadMask() +
+                        "&gcmap=" + context.streamConfig.getAttachedGamepadMask() +
+                        "&gcpersist=" + (context.streamConfig.getPersistGamepadsAfterDisconnect() ? 1 : 0) +
+                        MoonBridge.getLaunchUrlQueryParameters());
         if ((verb.equals("launch") && !getXmlString(xmlStr, "gamesession", true).equals("0") ||
                 (verb.equals("resume") && !getXmlString(xmlStr, "resume", true).equals("0")))) {
             // sessionUrl0 will be missing for older GFE versions
             context.rtspSessionUrl = getXmlString(xmlStr, "sessionUrl0", false);
             return true;
-        }
-        else {
+        } else {
             return false;
         }
     }
-    
+
     public boolean quitApp() throws IOException, XmlPullParserException {
         String xmlStr = openHttpConnectionToString(httpClientLongConnectNoReadTimeout, getHttpsUrl(true), "cancel");
         if (getXmlString(xmlStr, "cancel", true).equals("0")) {

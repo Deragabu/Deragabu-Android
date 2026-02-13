@@ -5,6 +5,7 @@ import android.content.Context;
 import android.net.nsd.NsdManager;
 import android.net.nsd.NsdServiceInfo;
 import android.os.Build;
+import android.util.Log;
 
 import java.net.Inet4Address;
 import java.net.Inet6Address;
@@ -15,8 +16,8 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-@TargetApi(Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
 public class NsdManagerDiscoveryAgent extends MdnsDiscoveryAgent {
+    private static final String TAG = "NsdManagerDiscoveryAgent";
     private static final String SERVICE_TYPE = "_nvstream._tcp";
     private final NsdManager nsdManager;
     private final Object listenerLock = new Object();
@@ -29,7 +30,8 @@ public class NsdManagerDiscoveryAgent extends MdnsDiscoveryAgent {
         return new NsdManager.DiscoveryListener() {
             @Override
             public void onStartDiscoveryFailed(String serviceType, int errorCode) {
-                LimeLog.severe("NSD: Service discovery start failed: " + errorCode);
+                //LimeLog.severe("NSD: Service discovery start failed: " + errorCode);
+                Log.e(TAG, "NSD: Service discovery start failed: " + errorCode);
 
                 // This listener is no longer pending after this failure
                 synchronized (listenerLock) {
@@ -45,8 +47,9 @@ public class NsdManagerDiscoveryAgent extends MdnsDiscoveryAgent {
 
             @Override
             public void onStopDiscoveryFailed(String serviceType, int errorCode) {
-                LimeLog.severe("NSD: Service discovery stop failed: " + errorCode);
+                //LimeLog.severe("NSD: Service discovery stop failed: " + errorCode);
 
+                    Log.e(TAG, "NSD: Service discovery stop failed: " + errorCode);
                 // This listener is no longer active after this failure
                 synchronized (listenerLock) {
                     if (activeListener != this) {
@@ -59,7 +62,8 @@ public class NsdManagerDiscoveryAgent extends MdnsDiscoveryAgent {
 
             @Override
             public void onDiscoveryStarted(String serviceType) {
-                LimeLog.info("NSD: Service discovery started");
+                //LimeLog.info("NSD: Service discovery started");
+                Log.i(TAG, "NSD: Service discovery started");
 
                 synchronized (listenerLock) {
                     if (pendingListener != this) {
@@ -75,7 +79,8 @@ public class NsdManagerDiscoveryAgent extends MdnsDiscoveryAgent {
 
             @Override
             public void onDiscoveryStopped(String serviceType) {
-                LimeLog.info("NSD: Service discovery stopped");
+                //LimeLog.info("NSD: Service discovery stopped");
+                Log.i(TAG, "NSD: Service discovery stopped");
 
                 synchronized (listenerLock) {
                     if (activeListener != this) {
@@ -95,18 +100,21 @@ public class NsdManagerDiscoveryAgent extends MdnsDiscoveryAgent {
                         return;
                     }
 
-                    LimeLog.info("NSD: Machine appeared: " + nsdServiceInfo.getServiceName());
+                    //LimeLog.info("NSD: Machine appeared: " + nsdServiceInfo.getServiceName());
+                    Log.i(TAG, "NSD: Machine appeared: " + nsdServiceInfo.getServiceName());
 
                     NsdManager.ServiceInfoCallback serviceInfoCallback = new NsdManager.ServiceInfoCallback() {
                         @Override
                         public void onServiceInfoCallbackRegistrationFailed(int errorCode) {
-                            LimeLog.severe("NSD: Service info callback registration failed: " + errorCode);
+                            //LimeLog.severe("NSD: Service info callback registration failed: " + errorCode);
+                            Log.e(TAG, "NSD: Service info callback registration failed: " + errorCode);
                             listener.notifyDiscoveryFailure(new RuntimeException("onServiceInfoCallbackRegistrationFailed(): " + errorCode));
                         }
 
                         @Override
                         public void onServiceUpdated(NsdServiceInfo nsdServiceInfo) {
-                            LimeLog.info("NSD: Machine resolved: " + nsdServiceInfo.getServiceName());
+                            //LimeLog.info("NSD: Machine resolved: " + nsdServiceInfo.getServiceName());
+                            Log.i(TAG, "NSD: Machine resolved: " + nsdServiceInfo.getServiceName());
                             reportNewComputer(nsdServiceInfo.getServiceName(), nsdServiceInfo.getPort(),
                                     getV4Addrs(nsdServiceInfo.getHostAddresses()),
                                     getV6Addrs(nsdServiceInfo.getHostAddresses()));
@@ -135,7 +143,8 @@ public class NsdManagerDiscoveryAgent extends MdnsDiscoveryAgent {
                         return;
                     }
 
-                    LimeLog.info("NSD: Machine lost: " + nsdServiceInfo.getServiceName());
+                    //LimeLog.info("NSD: Machine lost: " + nsdServiceInfo.getServiceName());
+                    Log.i(TAG, "NSD: Machine lost: " + nsdServiceInfo.getServiceName());
 
                     NsdManager.ServiceInfoCallback serviceInfoCallback = serviceCallbacks.remove(nsdServiceInfo.getServiceName());
                     if (serviceInfoCallback != null) {

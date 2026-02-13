@@ -10,6 +10,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Vibrator;
 import android.util.DisplayMetrics;
+import android.util.Log;
 import android.util.Range;
 import android.view.Display;
 import android.view.DisplayCutout;
@@ -34,6 +35,7 @@ import java.util.Arrays;
 import java.util.Objects;
 
 public class StreamSettings extends AppCompatActivity {
+    private static final String TAG = "StreamSettings";
     private int previousDisplayPixelCount;
 
     private static final int REQUEST_NOTIFICATION_PERMISSION = 1001;
@@ -53,11 +55,8 @@ public class StreamSettings extends AppCompatActivity {
         }
     }
 
-    // HACK for Android 9
-    static DisplayCutout displayCutoutP;
-
     void reloadSettings() {
-        Display.Mode mode = getDisplay().getMode();
+        Display.Mode mode = Objects.requireNonNull(getDisplay()).getMode();
         previousDisplayPixelCount = mode.getPhysicalWidth() * mode.getPhysicalHeight();
         getSupportFragmentManager().beginTransaction().replace(
                 R.id.stream_settings, new SettingsFragment()
@@ -82,10 +81,10 @@ public class StreamSettings extends AppCompatActivity {
     }
 
     @Override
-    public void onConfigurationChanged(Configuration newConfig) {
+    public void onConfigurationChanged(@NonNull Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
 
-        Display.Mode mode = getDisplay().getMode();
+        Display.Mode mode = Objects.requireNonNull(getDisplay()).getMode();
 
         // If the display's physical pixel count has changed, we consider that it's a new display
         // and we should reload our settings (which include display-dependent values).
@@ -304,7 +303,7 @@ public class StreamSettings extends AppCompatActivity {
             if (requireActivity().getPackageManager().hasSystemFeature("com.nvidia.feature.shield")) {
                 PreferenceCategory category = findPreference("category_input_settings");
                 if (category != null) {
-                    category.removePreference(findPreference("checkbox_absolute_mouse_mode"));
+                    category.removePreference(Objects.requireNonNull(findPreference("checkbox_absolute_mouse_mode")));
                 }
             }
 
@@ -313,7 +312,7 @@ public class StreamSettings extends AppCompatActivity {
                     !requireActivity().getPackageManager().hasSystemFeature(PackageManager.FEATURE_SENSOR_GYROSCOPE)) {
                 PreferenceCategory category = findPreference("category_gamepad_settings");
                 if (category != null) {
-                    category.removePreference(findPreference("checkbox_gamepad_motion_fallback"));
+                    category.removePreference(Objects.requireNonNull(findPreference("checkbox_gamepad_motion_fallback")));
                 }
             }
 
@@ -321,8 +320,8 @@ public class StreamSettings extends AppCompatActivity {
             if (!requireActivity().getPackageManager().hasSystemFeature(PackageManager.FEATURE_USB_HOST)) {
                 PreferenceCategory category = findPreference("category_gamepad_settings");
                 if (category != null) {
-                    category.removePreference(findPreference("checkbox_usb_bind_all"));
-                    category.removePreference(findPreference("checkbox_usb_driver"));
+                    category.removePreference(Objects.requireNonNull(findPreference("checkbox_usb_bind_all")));
+                    category.removePreference(Objects.requireNonNull(findPreference("checkbox_usb_driver")));
                 }
             }
 
@@ -331,7 +330,7 @@ public class StreamSettings extends AppCompatActivity {
             if (!requireActivity().getPackageManager().hasSystemFeature("android.software.picture_in_picture") || requireActivity().getPackageManager().hasSystemFeature("com.amazon.software.fireos")) {
                 PreferenceCategory category = findPreference("category_ui_settings");
                 if (category != null) {
-                    category.removePreference(findPreference("checkbox_enable_pip"));
+                    category.removePreference(Objects.requireNonNull(findPreference("checkbox_enable_pip")));
                 }
             }
 
@@ -342,13 +341,13 @@ public class StreamSettings extends AppCompatActivity {
             // Amplitude control is required for proper dual-motor rumble simulation
             if (!deviceVibrator.hasVibrator() || !deviceVibrator.hasAmplitudeControl()) {
                 if (category_gamepad_settings != null) {
-                    category_gamepad_settings.removePreference(findPreference("checkbox_vibrate_fallback"));
-                    category_gamepad_settings.removePreference(findPreference("seekbar_vibrate_fallback_strength"));
+                    category_gamepad_settings.removePreference(Objects.requireNonNull(findPreference("checkbox_vibrate_fallback")));
+                    category_gamepad_settings.removePreference(Objects.requireNonNull(findPreference("seekbar_vibrate_fallback_strength")));
                 }
                 // The entire OSC category may have already been removed by the touchscreen check above
                 PreferenceCategory category = findPreference("category_onscreen_controls");
                 if (category != null) {
-                    category.removePreference(findPreference("checkbox_vibrate_osc"));
+                    category.removePreference(Objects.requireNonNull(findPreference("checkbox_vibrate_osc")));
                 }
             }
 
@@ -363,6 +362,7 @@ public class StreamSettings extends AppCompatActivity {
             }
 
             Display display = requireActivity().getDisplay();
+            assert display != null;
             float maxSupportedFps = display.getRefreshRate();
 
             // Hide non-supported resolution/FPS combinations
@@ -427,31 +427,14 @@ public class StreamSettings extends AppCompatActivity {
             // decoder lists.
             MediaCodecHelper.initialize(getContext(), VulkanPreferences.readPreferences(getContext()).VulkanRenderer);
 
-            MediaCodecInfo avcDecoder = MediaCodecHelper.findProbableSafeDecoder("video/avc", -1);
             MediaCodecInfo hevcDecoder = MediaCodecHelper.findProbableSafeDecoder("video/hevc", -1);
 
-            if (avcDecoder != null) {
-                Range<Integer> avcWidthRange = Objects.requireNonNull(avcDecoder.getCapabilitiesForType("video/avc").getVideoCapabilities()).getSupportedWidths();
-
-                LimeLog.info("AVC supported width range: " + avcWidthRange.getLower() + " - " + avcWidthRange.getUpper());
-
-                // If 720p is not reported as supported, ignore all results from this API
-                if (avcWidthRange.contains(1280)) {
-                    if (avcWidthRange.contains(3840) && maxSupportedResW < 3840) {
-                        maxSupportedResW = 3840;
-                    } else if (avcWidthRange.contains(1920) && maxSupportedResW < 1920) {
-                        maxSupportedResW = 1920;
-                    } else if (maxSupportedResW < 1280) {
-                        maxSupportedResW = 1280;
-                    }
-                }
-            }
 
             if (hevcDecoder != null) {
                 Range<Integer> hevcWidthRange = Objects.requireNonNull(hevcDecoder.getCapabilitiesForType("video/hevc").getVideoCapabilities()).getSupportedWidths();
 
-                LimeLog.info("HEVC supported width range: " + hevcWidthRange.getLower() + " - " + hevcWidthRange.getUpper());
-
+                //LimeLog.info("HEVC supported width range: " + hevcWidthRange.getLower() + " - " + hevcWidthRange.getUpper());
+                Log.i(TAG, "HEVC supported width range: " + hevcWidthRange.getLower() + " - " + hevcWidthRange.getUpper());
                 // If 720p is not reported as supported, ignore all results from this API
                 if (hevcWidthRange.contains(1280)) {
                     if (hevcWidthRange.contains(3840) && maxSupportedResW < 3840) {
@@ -464,7 +447,8 @@ public class StreamSettings extends AppCompatActivity {
                 }
             }
 
-            LimeLog.info("Maximum resolution slot: " + maxSupportedResW);
+            //LimeLog.info("Maximum resolution slot: " + maxSupportedResW);
+            Log.i(TAG, "Maximum resolution slot: " + maxSupportedResW);
 
             if (maxSupportedResW != 0) {
                 if (maxSupportedResW < 3840) {
@@ -560,10 +544,11 @@ public class StreamSettings extends AppCompatActivity {
             }
 
             if (!foundHdr10) {
-                LimeLog.info("Excluding HDR toggle based on display capabilities");
+                //LimeLog.info("Excluding HDR toggle based on display capabilities");
+                    Log.i(TAG, "Excluding HDR toggle based on display capabilities");
                 PreferenceCategory category = findPreference("category_advanced_settings");
                 if (category != null) {
-                    category.removePreference(findPreference("checkbox_enable_hdr"));
+                    category.removePreference(Objects.requireNonNull(findPreference("checkbox_enable_hdr")));
                 }
             }
 
@@ -602,6 +587,7 @@ public class StreamSettings extends AppCompatActivity {
 
                     // If this is native resolution, show the warning dialog
                     if (isNativeRes) {
+                        assert getActivity() != null;
                         Dialog.displayDialog(getActivity(),
                                 getResources().getString(R.string.title_native_res_dialog),
                                 getResources().getString(R.string.text_native_res_dialog),

@@ -34,10 +34,14 @@ import android.os.Binder;
 import android.os.Build;
 import android.os.IBinder;
 import android.os.SystemClock;
+import android.util.Log;
+
+import androidx.annotation.NonNull;
 
 import org.xmlpull.v1.XmlPullParserException;
 
 public class ComputerManagerService extends Service {
+    private static final String TAG = "ComputerManagerService";
     private static final int SERVERINFO_POLLING_PERIOD_MS = 1500;
     private static final int APPLIST_POLLING_PERIOD_MS = 30000;
     private static final int APPLIST_FAILED_POLLING_RETRY_MS = 2000;
@@ -65,7 +69,7 @@ public class ComputerManagerService extends Service {
     private final ServiceConnection discoveryServiceConnection = new ServiceConnection() {
         public void onServiceConnected(ComponentName className, IBinder binder) {
             synchronized (discoveryServiceConnection) {
-                DiscoveryService.DiscoveryBinder privateBinder = ((DiscoveryService.DiscoveryBinder)binder);
+                DiscoveryService.DiscoveryBinder privateBinder = ((DiscoveryService.DiscoveryBinder) binder);
 
                 // Set us as the event listener
                 privateBinder.setListener(createDiscoveryListener());
@@ -129,8 +133,7 @@ public class ComputerManagerService extends Service {
             if (existingComputer != null) {
                 existingComputer.update(details);
                 dbManager.updateComputer(existingComputer);
-            }
-            else {
+            } else {
                 dbManager.updateComputer(details);
             }
         }
@@ -156,7 +159,7 @@ public class ComputerManagerService extends Service {
                         synchronized (tuple.networkLock) {
                             // Check if this poll has modified the details
                             if (!runPoll(tuple.computer, false, offlineCount)) {
-                                LimeLog.warning(tuple.computer.name + " is offline (try " + offlineCount + ")");
+                                Log.w(TAG, tuple.computer.name + " is offline (try " + offlineCount + ")");
                                 offlineCount++;
                             } else {
                                 tuple.lastSuccessfulPollMs = SystemClock.elapsedRealtime();
@@ -165,6 +168,7 @@ public class ComputerManagerService extends Service {
                         }
 
                         // Wait until the next polling interval
+                        //noinspection BusyWait
                         Thread.sleep(SERVERINFO_POLLING_PERIOD_MS);
                     } catch (InterruptedException e) {
                         break;
@@ -193,7 +197,7 @@ public class ComputerManagerService extends Service {
                 for (PollingTuple tuple : pollingTuples) {
                     // Enforce the poll data TTL
                     if (SystemClock.elapsedRealtime() - tuple.lastSuccessfulPollMs > POLL_DATA_TTL_MS) {
-                        LimeLog.info("Timing out polled state for "+tuple.computer.name);
+                        Log.i(TAG, "Timing out polled state for " + tuple.computer.name);
                         tuple.computer.state = ComputerDetails.State.UNKNOWN;
                     }
 
@@ -217,7 +221,7 @@ public class ComputerManagerService extends Service {
                         discoveryServiceConnection.wait(1000);
                     }
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    Log.e(TAG, "waitForReady: " + e.getMessage(), e);
 
                     // InterruptedException clears the thread's interrupt status. Since we can't
                     // handle that here, we will re-interrupt the thread to set the interrupt
@@ -230,9 +234,10 @@ public class ComputerManagerService extends Service {
         public void waitForPollingStopped() {
             while (activePolls.get() != 0) {
                 try {
+                    //noinspection BusyWait
                     Thread.sleep(250);
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    Log.e(TAG, "waitForPollingStopped: " + e.getMessage(), e);
 
                     // InterruptedException clears the thread's interrupt status. Since we can't
                     // handle that here, we will re-interrupt the thread to set the interrupt
@@ -347,10 +352,10 @@ public class ComputerManagerService extends Service {
                 try {
                     // Kick off a blocking serverinfo poll on this machine
                     if (!addComputerBlocking(details)) {
-                        LimeLog.warning("Auto-discovered PC failed to respond: "+details);
+                        Log.w(TAG, "Auto-discovered PC failed to respond: " + details);
                     }
                 } catch (InterruptedException e) {
-                    e.printStackTrace();
+                    Log.e(TAG, "notifyComputerAdded: " + e.getMessage(), e);
 
                     // InterruptedException clears the thread's interrupt status. Since we can't
                     // handle that here, we will re-interrupt the thread to set the interrupt
@@ -361,8 +366,7 @@ public class ComputerManagerService extends Service {
 
             @Override
             public void notifyDiscoveryFailure(Exception e) {
-                LimeLog.severe("mDNS discovery failed");
-                e.printStackTrace();
+                Log.e(TAG, "mDNS discovery failure: " + e.getMessage(), e);
             }
         };
     }
@@ -421,13 +425,11 @@ public class ComputerManagerService extends Service {
 
         // If the machine is reachable, it was successful
         if (fakeDetails.state == ComputerDetails.State.ONLINE) {
-            LimeLog.info("New PC ("+fakeDetails.name+") is UUID "+fakeDetails.uuid);
-
+            Log.i(TAG, "Adding new computer: " + fakeDetails);
             // Start a polling thread for this machine
             addTuple(fakeDetails);
             return true;
-        }
-        else {
+        } else {
             return false;
         }
     }
@@ -458,6 +460,7 @@ public class ComputerManagerService extends Service {
         releaseLocalDatabaseReference();
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     private boolean getLocalDatabaseReference() {
         if (dbRefCount.get() == 0) {
             return false;
@@ -491,19 +494,19 @@ public class ComputerManagerService extends Service {
 
             // Check if this is the PC we expected
             if (newDetails.uuid == null) {
-                LimeLog.severe("Polling returned no UUID!");
+                Log.i(TAG, "Polling returned no UUID!");
                 return null;
             }
             // details.uuid can be null on initial PC add
             else if (details.uuid != null && !details.uuid.equals(newDetails.uuid)) {
                 // We got the wrong PC!
-                LimeLog.info("Polling returned the wrong PC!");
+                Log.i(TAG, "Polling returned the wrong PC!");
                 return null;
             }
 
             return newDetails;
         } catch (XmlPullParserException e) {
-            e.printStackTrace();
+            Log.e(TAG, "tryPollIp: " + e.getMessage(), e);
             return null;
         } catch (IOException e) {
             // Check if this was caused by thread interruption
@@ -513,8 +516,7 @@ public class ComputerManagerService extends Service {
             return null;
         } catch (Exception e) {
             // Catch any other unexpected exceptions to prevent crashes
-            LimeLog.warning("Unexpected exception in tryPollIp: " + e.getMessage());
-            e.printStackTrace();
+            Log.w(TAG, "Unexpected exception in tryPollIp: " + e.getMessage(), e);
             return null;
         }
     }
@@ -561,7 +563,7 @@ public class ComputerManagerService extends Service {
                 }
             }
         };
-        tuple.pollingThread.setName("Parallel Poll - "+tuple.address+" - "+tuple.existingDetails.name);
+        tuple.pollingThread.setName("Parallel Poll - " + tuple.address + " - " + tuple.existingDetails.name);
         tuple.pollingThread.start();
     }
 
@@ -581,6 +583,7 @@ public class ComputerManagerService extends Service {
 
         try {
             // Check local first
+            //noinspection SynchronizationOnLocalVariableOrMethodParameter
             synchronized (localInfo) {
                 while (!localInfo.complete) {
                     localInfo.wait();
@@ -593,6 +596,7 @@ public class ComputerManagerService extends Service {
             }
 
             // Now manual
+            //noinspection SynchronizationOnLocalVariableOrMethodParameter
             synchronized (manualInfo) {
                 while (!manualInfo.complete) {
                     manualInfo.wait();
@@ -605,6 +609,7 @@ public class ComputerManagerService extends Service {
             }
 
             // Now remote IPv4
+            //noinspection SynchronizationOnLocalVariableOrMethodParameter
             synchronized (remoteInfo) {
                 while (!remoteInfo.complete) {
                     remoteInfo.wait();
@@ -617,6 +622,7 @@ public class ComputerManagerService extends Service {
             }
 
             // Now global IPv6
+            //noinspection SynchronizationOnLocalVariableOrMethodParameter
             synchronized (ipv6Info) {
                 while (!ipv6Info.complete) {
                     ipv6Info.wait();
@@ -641,15 +647,14 @@ public class ComputerManagerService extends Service {
 
     private boolean pollComputer(ComputerDetails details) throws InterruptedException {
         // Poll all addresses in parallel to speed up the process
-        LimeLog.info("Starting parallel poll for "+details.name+" ("+details.localAddress +", "+details.remoteAddress +", "+details.manualAddress+", "+details.ipv6Address+")");
+        Log.i(TAG, "Starting parallel poll for " + details.name + " (" + details.localAddress + ", " + details.remoteAddress + ", " + details.manualAddress + ", " + details.ipv6Address + ")");
         ComputerDetails polledDetails = parallelPollPc(details);
-        LimeLog.info("Parallel poll for "+details.name+" returned address: "+details.activeAddress);
+        Log.i(TAG, "Parallel poll for " + details.name + " returned address: " + details.activeAddress);
 
         if (polledDetails != null) {
             details.update(polledDetails);
             return true;
-        }
-        else {
+        } else {
             return false;
         }
     }
@@ -680,53 +685,98 @@ public class ComputerManagerService extends Service {
         releaseLocalDatabaseReference();
 
         // Monitor for network changes to invalidate our PC state
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            networkCallback = new ConnectivityManager.NetworkCallback() {
-                @Override
-                public void onAvailable(Network network) {
-                    LimeLog.info("Resetting PC state for new available network");
-                    synchronized (pollingTuples) {
-                        for (PollingTuple tuple : pollingTuples) {
-                            tuple.computer.state = ComputerDetails.State.UNKNOWN;
-                            if (listener != null) {
-                                listener.notifyComputerUpdated(tuple.computer);
-                            }
+        networkCallback = new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(@NonNull Network network) {
+                Log.i(TAG, "Resetting PC state for new available network");
+                synchronized (pollingTuples) {
+                    for (PollingTuple tuple : pollingTuples) {
+                        tuple.computer.state = ComputerDetails.State.UNKNOWN;
+                        if (listener != null) {
+                            listener.notifyComputerUpdated(tuple.computer);
                         }
                     }
                 }
+            }
 
-                @Override
-                public void onLost(Network network) {
-                    LimeLog.info("Offlining PCs due to network loss");
-                    synchronized (pollingTuples) {
-                        for (PollingTuple tuple : pollingTuples) {
-                            tuple.computer.state = ComputerDetails.State.OFFLINE;
-                            if (listener != null) {
-                                listener.notifyComputerUpdated(tuple.computer);
-                            }
+            @Override
+            public void onLost(@NonNull Network network) {
+                Log.i(TAG, "Offlining PCs due to network loss");
+                synchronized (pollingTuples) {
+                    for (PollingTuple tuple : pollingTuples) {
+                        tuple.computer.state = ComputerDetails.State.OFFLINE;
+                        if (listener != null) {
+                            listener.notifyComputerUpdated(tuple.computer);
                         }
                     }
                 }
-            };
+            }
+        };
 
-            ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            connMgr.registerDefaultNetworkCallback(networkCallback);
+        ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        connMgr.registerDefaultNetworkCallback(networkCallback);
+    }
+
+    /**
+     * Awaits termination of all polling threads with a timeout.
+     * This prevents indefinite blocking when HttpURLConnection operations don't respond to interrupts.
+     */
+    private void awaitPollingTermination(long timeoutMs) {
+        long startTime = SystemClock.elapsedRealtime();
+        boolean allTerminated;
+
+        do {
+            allTerminated = true;
+            synchronized (pollingTuples) {
+                for (PollingTuple tuple : pollingTuples) {
+                    if (tuple.thread != null && tuple.thread.isAlive()) {
+                        allTerminated = false;
+                        break;
+                    }
+                }
+            }
+
+            if (!allTerminated) {
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Log.w(TAG, "Interrupted while awaiting polling termination");
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        } while (!allTerminated && (SystemClock.elapsedRealtime() - startTime) < timeoutMs);
+
+        if (!allTerminated) {
+            Log.w(TAG, "Some polling threads did not terminate within " + timeoutMs + "ms timeout");
+        } else {
+            Log.i(TAG, "All polling threads terminated successfully");
         }
     }
 
     @Override
     public void onDestroy() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-            connMgr.unregisterNetworkCallback(networkCallback);
-        }
+        ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        connMgr.unregisterNetworkCallback(networkCallback);
 
         if (discoveryBinder != null) {
             // Unbind from the discovery service
             unbindService(discoveryServiceConnection);
         }
 
-        // FIXME: Should await termination here but we have timeout issues in HttpURLConnection
+        // Stop polling if still active and wait for threads to terminate
+        // Use a timeout to avoid blocking indefinitely due to HttpURLConnection timeout issues
+        pollingActive = false;
+        synchronized (pollingTuples) {
+            for (PollingTuple tuple : pollingTuples) {
+                if (tuple.thread != null) {
+                    tuple.thread.interrupt();
+                }
+            }
+        }
+
+        // Wait up to 2 seconds for threads to terminate gracefully
+        awaitPollingTermination(2000);
 
         // Remove the initial DB reference
         releaseLocalDatabaseReference();
@@ -760,8 +810,7 @@ public class ComputerManagerService extends Service {
                         // If we've already reported an app list successfully,
                         // wait the full polling period
                         pollEvent.wait(APPLIST_POLLING_PERIOD_MS);
-                    }
-                    else {
+                    } else {
                         // If we've failed to get an app list so far, retry much earlier
                         pollEvent.wait(APPLIST_FAILED_POLLING_RETRY_MS);
                     }
@@ -786,90 +835,85 @@ public class ComputerManagerService extends Service {
         }
 
         public void start() {
-            thread = new Thread() {
-                @Override
-                public void run() {
-                    int emptyAppListResponses = 0;
-                    do {
-                        // Can't poll if it's not online or paired
-                        if (computer.state != ComputerDetails.State.ONLINE ||
-                                computer.pairState != PairingManager.PairState.PAIRED) {
-                            if (listener != null) {
-                                listener.notifyComputerUpdated(computer);
-                            }
-                            continue;
+            thread = new Thread(() -> {
+                int emptyAppListResponses = 0;
+                do {
+                    // Can't poll if it's not online or paired
+                    if (computer.state != ComputerDetails.State.ONLINE ||
+                            computer.pairState != PairingManager.PairState.PAIRED) {
+                        if (listener != null) {
+                            listener.notifyComputerUpdated(computer);
                         }
+                        continue;
+                    }
 
-                        // Can't poll if there's no UUID yet
-                        if (computer.uuid == null) {
-                            continue;
-                        }
+                    // Can't poll if there's no UUID yet
+                    if (computer.uuid == null) {
+                        continue;
+                    }
 
-                        PollingTuple tuple = getPollingTuple(computer);
+                    PollingTuple tuple = getPollingTuple(computer);
 
-                        try {
-                            NvHTTP http = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(computer), computer.httpsPort, idManager.getUniqueId(),
-                                    computer.serverCert, PlatformBinding.getCryptoProvider(ComputerManagerService.this));
+                    try {
+                        NvHTTP http = new NvHTTP(ServerHelper.getCurrentAddressFromComputer(computer), computer.httpsPort, idManager.getUniqueId(),
+                                computer.serverCert, PlatformBinding.getCryptoProvider(ComputerManagerService.this));
 
-                            String appList;
-                            if (tuple != null) {
-                                // If we're polling this machine too, grab the network lock
-                                // while doing the app list request to prevent other requests
-                                // from being issued in the meantime.
-                                synchronized (tuple.networkLock) {
-                                    appList = http.getAppListRaw();
-                                }
-                            }
-                            else {
-                                // No polling is happening now, so we just call it directly
+                        String appList;
+                        if (tuple != null) {
+                            // If we're polling this machine too, grab the network lock
+                            // while doing the app list request to prevent other requests
+                            // from being issued in the meantime.
+                            synchronized (tuple.networkLock) {
                                 appList = http.getAppListRaw();
                             }
-
-                            List<NvApp> list = NvHTTP.getAppListByReader(new StringReader(appList));
-                            if (list.isEmpty()) {
-                                LimeLog.warning("Empty app list received from "+computer.uuid);
-
-                                // The app list might actually be empty, so if we get an empty response a few times
-                                // in a row, we'll go ahead and believe it.
-                                emptyAppListResponses++;
-                            }
-                            if (!appList.isEmpty() &&
-                                    (!list.isEmpty() || emptyAppListResponses >= EMPTY_LIST_THRESHOLD)) {
-                                // Open the cache file
-                                try (final OutputStream cacheOut = CacheHelper.openCacheFileForOutput(
-                                        getCacheDir(), "applist", computer.uuid)
-                                ) {
-                                    CacheHelper.writeStringToOutputStream(cacheOut, appList);
-                                } catch (IOException e) {
-                                    e.printStackTrace();
-                                }
-
-                                // Reset empty count if it wasn't empty this time
-                                if (!list.isEmpty()) {
-                                    emptyAppListResponses = 0;
-                                }
-
-                                // Update the computer
-                                computer.rawAppList = appList;
-                                receivedAppList = true;
-
-                                // Notify that the app list has been updated
-                                // and ensure that the thread is still active
-                                if (listener != null && thread != null) {
-                                    listener.notifyComputerUpdated(computer);
-                                }
-                            }
-                            else if (appList.isEmpty()) {
-                                LimeLog.warning("Null app list received from "+computer.uuid);
-                            }
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        } catch (XmlPullParserException e) {
-                            e.printStackTrace();
+                        } else {
+                            // No polling is happening now, so we just call it directly
+                            appList = http.getAppListRaw();
                         }
-                    } while (waitPollingDelay());
-                }
-            };
+
+                        List<NvApp> list = NvHTTP.getAppListByReader(new StringReader(appList));
+                        if (list.isEmpty()) {
+                            Log.i(TAG, "Empty app list received from " + computer.uuid);
+
+                            // The app list might actually be empty, so if we get an empty response a few times
+                            // in a row, we'll go ahead and believe it.
+                            emptyAppListResponses++;
+                        }
+                        if (!appList.isEmpty() &&
+                                (!list.isEmpty() || emptyAppListResponses >= EMPTY_LIST_THRESHOLD)) {
+                            // Open the cache file
+                            try (final OutputStream cacheOut = CacheHelper.openCacheFileForOutput(
+                                    getCacheDir(), "applist", computer.uuid)
+                            ) {
+                                CacheHelper.writeStringToOutputStream(cacheOut, appList);
+                            } catch (IOException e) {
+                                Log.e(TAG, "Failed to write app list cache for " + computer.uuid + ": " + e.getMessage(), e);
+                            }
+
+                            // Reset empty count if it wasn't empty this time
+                            if (!list.isEmpty()) {
+                                emptyAppListResponses = 0;
+                            }
+
+                            // Update the computer
+                            computer.rawAppList = appList;
+                            receivedAppList = true;
+
+                            // Notify that the app list has been updated
+                            // and ensure that the thread is still active
+                            if (listener != null && thread != null) {
+                                listener.notifyComputerUpdated(computer);
+                            }
+                        } else if (appList.isEmpty()) {
+                            Log.w(TAG, "Null app list received from " + computer.uuid);
+                        }
+                    } catch (IOException e) {
+                        Log.w(TAG, "IOException while polling app list for " + computer.uuid + ": " + e.getMessage(), e);
+                    } catch (XmlPullParserException e) {
+                        Log.w(TAG, "XmlPullParserException while polling app list for " + computer.uuid + ": " + e.getMessage(), e);
+                    }
+                } while (waitPollingDelay());
+            });
             thread.setName("App list polling thread for " + computer.name);
             thread.start();
         }

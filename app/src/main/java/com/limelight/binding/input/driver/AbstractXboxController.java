@@ -6,6 +6,7 @@ import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbEndpoint;
 import android.hardware.usb.UsbInterface;
 import android.os.SystemClock;
+import android.util.Log;
 
 import com.limelight.nvstream.input.ControllerPacket;
 import com.limelight.nvstream.jni.MoonBridge;
@@ -14,6 +15,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
 public abstract class AbstractXboxController extends AbstractController {
+    private final static String TAG = "AbstractXboxController";
     protected final UsbDevice device;
     protected final UsbDeviceConnection connection;
 
@@ -76,7 +78,7 @@ public abstract class AbstractXboxController extends AbstractController {
                         }
 
                         if (res == -1 && SystemClock.uptimeMillis() - lastMillis < 1000) {
-                            LimeLog.warning("Detected device I/O error");
+                            Log.w(TAG, "Detected device I/O error");
                             AbstractXboxController.this.stop();
                             break;
                         }
@@ -101,7 +103,8 @@ public abstract class AbstractXboxController extends AbstractController {
             UsbInterface iface = device.getInterface(i);
 
             if (!connection.claimInterface(iface, true)) {
-                LimeLog.warning("Failed to claim interfaces");
+                //LimeLog.warning("Failed to claim interfaces");
+                Log.w(TAG, "Failed to claim interface " + iface.getId());
                 return false;
             }
         }
@@ -112,14 +115,15 @@ public abstract class AbstractXboxController extends AbstractController {
             UsbEndpoint endpt = iface.getEndpoint(i);
             if (endpt.getDirection() == UsbConstants.USB_DIR_IN) {
                 if (inEndpt != null) {
-                    LimeLog.warning("Found duplicate IN endpoint");
+                    //LimeLog.warning("Found duplicate IN endpoint");
+                    Log.w(TAG, "Found duplicate IN endpoint");
                     return false;
                 }
                 inEndpt = endpt;
-            }
-            else if (endpt.getDirection() == UsbConstants.USB_DIR_OUT) {
+            } else if (endpt.getDirection() == UsbConstants.USB_DIR_OUT) {
                 if (outEndpt != null) {
-                    LimeLog.warning("Found duplicate OUT endpoint");
+                    //LimeLog.warning("Found duplicate OUT endpoint");
+                    Log.w(TAG, "Found duplicate OUT endpoint");
                     return false;
                 }
                 outEndpt = endpt;
@@ -128,7 +132,8 @@ public abstract class AbstractXboxController extends AbstractController {
 
         // Make sure the required endpoints were present
         if (inEndpt == null || outEndpt == null) {
-            LimeLog.warning("Missing required endpoint");
+            //LimeLog.warning("Missing required endpoint");
+            Log.w(TAG, "Missing required endpoint");
             return false;
         }
 
@@ -152,7 +157,7 @@ public abstract class AbstractXboxController extends AbstractController {
         stopped = true;
 
         // Cancel any rumble effects
-        rumble((short)0, (short)0);
+        rumble((short) 0, (short) 0);
 
         // Stop the input thread
         if (inputThread != null) {
@@ -168,5 +173,6 @@ public abstract class AbstractXboxController extends AbstractController {
     }
 
     protected abstract boolean handleRead(ByteBuffer buffer);
+
     protected abstract boolean doInit();
 }

@@ -1,37 +1,41 @@
 package com.limelight.nvstream.http;
 
+import android.util.Log;
+
 public class NvApp {
+    private final String TAG = "NvApp";
     private String appName = "";
     private int appId;
     private boolean initialized;
     private boolean hdrSupported;
-    
-    public NvApp() {}
-    
+
+    public NvApp() {
+    }
+
     public NvApp(String appName) {
         this.appName = appName;
     }
-    
+
     public NvApp(String appName, int appId, boolean hdrSupported) {
         this.appName = appName;
         this.appId = appId;
         this.hdrSupported = hdrSupported;
         this.initialized = true;
     }
-    
+
     public void setAppName(String appName) {
         this.appName = appName;
     }
-    
+
     public void setAppId(String appId) {
         try {
             this.appId = Integer.parseInt(appId);
             this.initialized = true;
         } catch (NumberFormatException e) {
-            LimeLog.warning("Malformed app ID: "+appId);
+            Log.w(TAG, "Malformed app ID: " + appId, e);
         }
     }
-    
+
     public void setAppId(int appId) {
         this.appId = appId;
         this.initialized = true;
@@ -40,11 +44,11 @@ public class NvApp {
     public void setHdrSupported(boolean hdrSupported) {
         this.hdrSupported = hdrSupported;
     }
-    
+
     public String getAppName() {
         return this.appName;
     }
-    
+
     public int getAppId() {
         return this.appId;
     }
@@ -52,16 +56,14 @@ public class NvApp {
     public boolean isHdrSupported() {
         return this.hdrSupported;
     }
-    
+
     public boolean isInitialized() {
         return this.initialized;
     }
 
     @Override
     public String toString() {
-        StringBuilder str = new StringBuilder();
-        str.append("Name: ").append(appName).append("\n");
-        str.append("ID: ").append(appId).append("\n");
-        return str.toString();
+        return "Name: " + appName + "\n" +
+                "ID: " + appId + "\n";
     }
 }

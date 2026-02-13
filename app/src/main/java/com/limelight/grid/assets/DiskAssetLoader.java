@@ -2,10 +2,9 @@ package com.limelight.grid.assets;
 
 import android.app.ActivityManager;
 import android.content.Context;
-import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.ImageDecoder;
-import android.os.Build;
+import android.util.Log;
 
 import com.limelight.utils.CacheHelper;
 
@@ -15,6 +14,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 
 public class DiskAssetLoader {
+    private static final String TAG = "DiskAssetLoader";
     // 5 MB
     private static final long MAX_ASSET_SIZE = 5 * 1024 * 1024;
 
@@ -67,69 +67,29 @@ public class DiskAssetLoader {
 
         // Make sure the cached asset doesn't exceed the maximum size
         if (file.length() > MAX_ASSET_SIZE) {
-            LimeLog.warning("Removing cached tuple exceeding size threshold: "+tuple);
+            Log.w(TAG, "Removing cached tuple exceeding size threshold: " + tuple);
+            //noinspection ResultOfMethodCallIgnored
             file.delete();
             return null;
         }
 
-        Bitmap bmp;
+        final ScaledBitmap scaledBitmap = new ScaledBitmap();
+        try {
+            scaledBitmap.bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(file), (imageDecoder, imageInfo, source) -> {
+                scaledBitmap.originalWidth = imageInfo.getSize().getWidth();
+                scaledBitmap.originalHeight = imageInfo.getSize().getHeight();
 
-        // For OSes prior to P, we have to use the ugly BitmapFactory API
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            // Lookup bounds of the downloaded image
-            BitmapFactory.Options decodeOnlyOptions = new BitmapFactory.Options();
-            decodeOnlyOptions.inJustDecodeBounds = true;
-            BitmapFactory.decodeFile(file.getAbsolutePath(), decodeOnlyOptions);
-            if (decodeOnlyOptions.outWidth <= 0 || decodeOnlyOptions.outHeight <= 0) {
-                // Dimensions set to -1 on error. Return value always null.
-                return null;
-            }
-
-            LimeLog.info("Tuple "+tuple+" has cached art of size: "+decodeOnlyOptions.outWidth+"x"+decodeOnlyOptions.outHeight);
-
-            // Load the image scaled to the appropriate size
-            BitmapFactory.Options options = new BitmapFactory.Options();
-            options.inSampleSize = calculateInSampleSize(decodeOnlyOptions,
-                    STANDARD_ASSET_WIDTH / sampleSize,
-                    STANDARD_ASSET_HEIGHT / sampleSize);
-            if (isLowRamDevice) {
-                options.inPreferredConfig = Bitmap.Config.RGB_565;
-                options.inDither = true;
-            }
-            else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                options.inPreferredConfig = Bitmap.Config.HARDWARE;
-            }
-
-            bmp = BitmapFactory.decodeFile(file.getAbsolutePath(), options);
-            if (bmp != null) {
-                LimeLog.info("Tuple "+tuple+" decoded from disk cache with sample size: "+options.inSampleSize);
-                return new ScaledBitmap(decodeOnlyOptions.outWidth, decodeOnlyOptions.outHeight, bmp);
-            }
-        }
-        else {
-            // On P, we can get a bitmap back in one step with ImageDecoder
-            final ScaledBitmap scaledBitmap = new ScaledBitmap();
-            try {
-                scaledBitmap.bitmap = ImageDecoder.decodeBitmap(ImageDecoder.createSource(file), new ImageDecoder.OnHeaderDecodedListener() {
-                    @Override
-                    public void onHeaderDecoded(ImageDecoder imageDecoder, ImageDecoder.ImageInfo imageInfo, ImageDecoder.Source source) {
-                        scaledBitmap.originalWidth = imageInfo.getSize().getWidth();
-                        scaledBitmap.originalHeight = imageInfo.getSize().getHeight();
-
-                        imageDecoder.setTargetSize(STANDARD_ASSET_WIDTH, STANDARD_ASSET_HEIGHT);
-                        if (isLowRamDevice) {
-                            imageDecoder.setMemorySizePolicy(ImageDecoder.MEMORY_POLICY_LOW_RAM);
-                        }
-                    }
-                });
-                return scaledBitmap;
-            } catch (IOException e) {
-                e.printStackTrace();
-                return null;
-            }
+                imageDecoder.setTargetSize(STANDARD_ASSET_WIDTH, STANDARD_ASSET_HEIGHT);
+                if (isLowRamDevice) {
+                    imageDecoder.setMemorySizePolicy(ImageDecoder.MEMORY_POLICY_LOW_RAM);
+                }
+            });
+            return scaledBitmap;
+        } catch (IOException e) {
+            Log.e(TAG, "loadBitmapFromCache: " + e.getMessage(), e);
+            return null;
         }
 
-        return null;
     }
 
     public File getFile(String computerUuid, int appId) {
@@ -141,6 +101,7 @@ public class DiskAssetLoader {
         File[] files = dir.listFiles();
         if (files != null) {
             for (File f : files) {
+                //noinspection ResultOfMethodCallIgnored
                 f.delete();
             }
         }
@@ -154,10 +115,10 @@ public class DiskAssetLoader {
             CacheHelper.writeInputStreamToOutputStream(input, out, MAX_ASSET_SIZE);
             success = true;
         } catch (IOException e) {
-            e.printStackTrace();
+            Log.e(TAG, "populateCacheWithStream: " + e.getMessage(), e);
         } finally {
             if (!success) {
-                LimeLog.warning("Unable to populate cache with tuple: "+tuple);
+                Log.w(TAG, "Unable to populate cache with tuple: " + tuple);
                 CacheHelper.deleteCacheFile(cacheDir, "boxart", tuple.computer.uuid, tuple.app.getAppId() + ".png");
             }
         }

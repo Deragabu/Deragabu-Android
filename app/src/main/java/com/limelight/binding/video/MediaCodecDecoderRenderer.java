@@ -115,9 +115,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         return capabilityChecker.isHevcSupported();
     }
 
-    public boolean isAvcSupported() {
-        return capabilityChecker.isAvcSupported();
-    }
 
     public boolean isHevcMain10Hdr10Supported() {
         return capabilityChecker.isHevcMain10Hdr10Supported();
@@ -223,7 +220,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             format.removeKey(MediaFormat.KEY_HDR_STATIC_INFO);
         }
 
-        LimeLog.info("Configuring with format: " + format);
+        //LimeLog.info("Configuring with format: " + format);
+        Log.i(TAG, "Configuring with format: " + format);
 
         videoDecoder.configure(format, renderTarget.getSurface(), null, 0);
 
@@ -235,7 +233,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         // This will contain the actual accepted input format attributes
         inputFormat = videoDecoder.getInputFormat();
-        LimeLog.info("Input format: " + inputFormat);
+        //LimeLog.info("Input format: " + inputFormat);
+            Log.i(TAG, "Input format: " + inputFormat);
 
         videoDecoder.setVideoScalingMode(MediaCodec.VIDEO_SCALING_MODE_SCALE_TO_FIT);
 
@@ -249,7 +248,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         try {
             videoDecoder = MediaCodec.createByCodecName(selectedDecoderInfo.getName());
             configureAndStartDecoder(format);
-            LimeLog.info("Using codec " + selectedDecoderInfo.getName() + " for hardware decoding " + format.getString(MediaFormat.KEY_MIME));
+            //LimeLog.info("Using codec " + selectedDecoderInfo.getName() + " for hardware decoding " + format.getString(MediaFormat.KEY_MIME));
+                Log.i(TAG, "Using codec " + selectedDecoderInfo.getName() + " for hardware decoding " + format.getString(MediaFormat.KEY_MIME));
             activeDecoderName = selectedDecoderInfo.getName();
             configured = true;
         } catch (IllegalArgumentException | IllegalStateException e) {
@@ -275,31 +275,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         String mimeType;
         MediaCodecInfo selectedDecoderInfo;
 
-        if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_H264) != 0) {
-            mimeType = "video/avc";
-            selectedDecoderInfo = capabilityChecker.getAvcDecoder();
-
-            if (selectedDecoderInfo == null) {
-                LimeLog.severe("No available AVC decoder!");
-                return -1;
-            }
-
-            if (initialWidth > 4096 || initialHeight > 4096) {
-                LimeLog.severe("> 4K streaming only supported on HEVC");
-                return -1;
-            }
-
-            // Initialize CSD processor with H.264 specific settings
-            csdProcessor.initialize(selectedDecoderInfo.getName()
-            );
-
-            refFrameInvalidationActive = capabilityChecker.isRefFrameInvalidationAvc();
-        } else if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_H265) != 0) {
+       if ((videoFormat & MoonBridge.VIDEO_FORMAT_MASK_H265) != 0) {
             mimeType = "video/hevc";
             selectedDecoderInfo = capabilityChecker.getHevcDecoder();
 
             if (selectedDecoderInfo == null) {
-                LimeLog.severe("No available HEVC decoder!");
+                //LimeLog.severe("No available HEVC decoder!");
+                Log.e(TAG, "No available HEVC decoder!");
                 return -2;
             }
 
@@ -309,14 +291,16 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
             selectedDecoderInfo = capabilityChecker.getAv1Decoder();
 
             if (selectedDecoderInfo == null) {
-                LimeLog.severe("No available AV1 decoder!");
+                //LimeLog.severe("No available AV1 decoder!");
+                Log.e(TAG, "No available AV1 decoder!");
                 return -2;
             }
 
             refFrameInvalidationActive = capabilityChecker.isRefFrameInvalidationAv1();
         } else {
             // Unknown format
-            LimeLog.severe("Unknown format");
+            Log.e(TAG, "Unknown video format: " + videoFormat);
+            //LimeLog.severe("Unknown format");
             return -3;
         }
 
@@ -331,7 +315,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         // Force low-latency decoder: Only try with all low-latency options enabled (tryNumber=0)
         // Do not allow fallback to non-low-latency options
-        LimeLog.info("Decoder configuration: Forcing low-latency mode");
+        //LimeLog.info("Decoder configuration: Forcing low-latency mode");
+        Log.i(TAG, "Decoder configuration: Forcing low-latency mode");
 
         MediaFormat mediaFormat = createBaseMediaFormat(mimeType);
 
@@ -340,7 +325,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
         // Try to configure the decoder with low-latency options
         if (!tryConfigureDecoder(selectedDecoderInfo, mediaFormat, throwOnCodecError)) {
-            LimeLog.severe("Low-latency decoder required but configuration failed. Aborting without fallback.");
+            //LimeLog.severe("Low-latency decoder required but configuration failed. Aborting without fallback.");
+            Log.e(TAG, "Low-latency decoder required but configuration failed. Aborting without fallback.");
             return -5;
         }
 
@@ -430,11 +416,13 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
 
     private boolean handleCodecException(CodecException codecExc) {
         if (codecExc.isTransient()) {
-            LimeLog.warning(codecExc.getDiagnosticInfo());
+            //LimeLog.warning(codecExc.getDiagnosticInfo());
+            Log.w(TAG, codecExc.getDiagnosticInfo());
             return true;
         }
 
-        LimeLog.severe(codecExc.getDiagnosticInfo());
+        //LimeLog.severe(codecExc.getDiagnosticInfo());
+        Log.e(TAG, codecExc.getDiagnosticInfo(), codecExc);
 
         if (!recoveryManager.hasExceededMaxRecoveryAttempts()) {
             if (codecExc.isRecoverable()) {
@@ -489,7 +477,6 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         state.framePacing = this.prefs.framePacing;
         state.consecutiveCrashCount = this.consecutiveCrashCount;
 
-        state.avcDecoder = capabilityChecker.getAvcDecoder();
         state.hevcDecoder = capabilityChecker.getHevcDecoder();
         state.av1Decoder = capabilityChecker.getAv1Decoder();
         state.avcDecoderName = state.avcDecoder != null ? state.avcDecoder.getName() : null;
@@ -661,9 +648,10 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
                             }
                         } else {
                             if (outIndex == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
-                                LimeLog.info("Output format changed");
+                                //LimeLog.info("Output format changed");
                                 outputFormat = videoDecoder.getOutputFormat();
-                                LimeLog.info("New output format: " + outputFormat);
+                                //LimeLog.info("New output format: " + outputFormat);
+                                Log.i(TAG, "Output format changed: " + outputFormat);
                             }
                         }
                     } catch (IllegalStateException e) {
@@ -724,7 +712,8 @@ public class MediaCodecDecoderRenderer extends VideoDecoderRenderer implements C
         int deltaMs = (int) (SystemClock.uptimeMillis() - startTime);
 
         if (deltaMs >= 20) {
-            LimeLog.warning("Dequeue input buffer ran long: " + deltaMs + " ms");
+            //LimeLog.warning("Dequeue input buffer ran long: " + deltaMs + " ms");
+            Log.w(TAG, "Dequeue input buffer ran long: " + deltaMs + " ms");
         }
 
         if (nextInputBuffer == null) {

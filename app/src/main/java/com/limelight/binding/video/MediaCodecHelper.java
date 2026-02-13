@@ -176,7 +176,8 @@ public class MediaCodecHelper {
         }
 
         String modelNumber = matcher.group(2);
-        LimeLog.info("Found Adreno GPU: " + modelNumber);
+        //LimeLog.info("Found Adreno GPU: " + modelNumber);
+        Log.i(TAG, "Found Adreno GPU: " + modelNumber);
         return modelNumber;
     }
 
@@ -219,19 +220,21 @@ public class MediaCodecHelper {
                 (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
         ConfigurationInfo configInfo = activityManager.getDeviceConfigurationInfo();
         if (configInfo.reqGlEsVersion != ConfigurationInfo.GL_ES_VERSION_UNDEFINED) {
-            LimeLog.info("OpenGL ES version: " + configInfo.reqGlEsVersion);
+            //LimeLog.info("OpenGL ES version: " + configInfo.reqGlEsVersion);
+            Log.i(TAG, "OpenGL ES version: " + configInfo.reqGlEsVersion);
 
             isLowEndSnapdragon = isLowEndSnapdragonRenderer(glRenderer);
             isAdreno620 = getAdrenoRendererModelNumber(glRenderer) == 620;
 
             // Tegra K1 and later can do reference frame invalidation properly
             if (configInfo.reqGlEsVersion >= 0x30000) {
-                LimeLog.info("Added c2.nvidia to reference frame invalidation support list");
-
+                //LimeLog.info("Added c2.nvidia to reference frame invalidation support list");
+                Log.i(TAG, "Added c2.nvidia to reference frame invalidation support list");
                 refFrameInvalidationAvcPrefixes.add("c2.nvidia"); // Unconfirmed
                 refFrameInvalidationHevcPrefixes.add("c2.nvidia"); // Unconfirmed
 
-                LimeLog.info("Added c2.qti to reference frame invalidation support list");
+                //LimeLog.info("Added c2.qti to reference frame invalidation support list");
+                Log.i(TAG, "Added c2.qti to reference frame invalidation support list");
                 refFrameInvalidationAvcPrefixes.add("c2.qti");
                 refFrameInvalidationHevcPrefixes.add("c2.qti");
             }
@@ -245,7 +248,8 @@ public class MediaCodecHelper {
             // (see comment on isGLES31SnapdragonRenderer).
             //
             if (isGLES31SnapdragonRenderer(glRenderer)) {
-                LimeLog.info("Added c2.qti to HEVC decoders based on GLES 3.1+ support");
+                //LimeLog.info("Added c2.qti to HEVC decoders based on GLES 3.1+ support");
+                Log.i(TAG, "Added c2.qti to HEVC decoders based on GLES 3.1+ support");
                 whitelistedHevcDecoders.add("c2.qti");
             } else {
                 // These older decoders need 4 slices per frame for best performance
@@ -254,13 +258,15 @@ public class MediaCodecHelper {
 
             // MediaTek SoCs with PowerVR GPUs have good HEVC support.
             if (isPowerVR(glRenderer)) {
-                LimeLog.info("Added c2.mtk to HEVC decoders based on PowerVR GPU");
+                //LimeLog.info("Added c2.mtk to HEVC decoders based on PowerVR GPU");
+                Log.i(TAG, "Added c2.mtk to HEVC decoders based on PowerVR GPU");
                 whitelistedHevcDecoders.add("c2.mtk");
 
                 // RFI on HEVC causes decoder hangs on the newer GE8100, GE8300, and GE8320 GPUs,
                 // so we limit it to the Series6XT GPUs where we know it works.
                 if (glRenderer.contains("GX6")) {
-                    LimeLog.info("Added c2.mtk to RFI list for HEVC");
+                    //LimeLog.info("Added c2.mtk to RFI list for HEVC");
+                    Log.i(TAG, "Added c2.mtk to RFI list for HEVC");
                     refFrameInvalidationHevcPrefixes.add("c2.mtk");
                 }
             }
@@ -289,7 +295,8 @@ public class MediaCodecHelper {
     private static boolean decoderSupportsAndroidRLowLatency(MediaCodecInfo decoderInfo, String mimeType) {
         try {
             if (decoderInfo.getCapabilitiesForType(mimeType).isFeatureSupported(CodecCapabilities.FEATURE_LowLatency)) {
-                LimeLog.info("Low latency decoding mode supported (FEATURE_LowLatency)");
+                //LimeLog.info("Low latency decoding mode supported (FEATURE_LowLatency)");
+                Log.i(TAG, "Low latency decoding mode supported (FEATURE_LowLatency)");
                 return true;
             }
         } catch (Exception e) {
@@ -311,7 +318,8 @@ public class MediaCodecHelper {
             for (String supportedOption : testCodec.getSupportedVendorParameters()) {
                 for (String knownLowLatencyOption : knownVendorLowLatencyOptions) {
                     if (supportedOption.equalsIgnoreCase(knownLowLatencyOption)) {
-                        LimeLog.info(decoderName + " supports known low latency option: " + supportedOption);
+                        //LimeLog.info(decoderName + " supports known low latency option: " + supportedOption);
+                        Log.i(TAG, decoderName + " supports known low latency option: " + supportedOption);
                         return true;
                     }
                 }
@@ -442,7 +450,8 @@ public class MediaCodecHelper {
         try {
             if (decoderInfo.getCapabilitiesForType(mimeType).
                     isFeatureSupported(CodecCapabilities.FEATURE_AdaptivePlayback)) {
-                LimeLog.info("Decoder supports fused IDR frames (FEATURE_AdaptivePlayback)");
+                //LimeLog.info("Decoder supports fused IDR frames (FEATURE_AdaptivePlayback)");
+                Log.i(TAG, "Decoder supports fused IDR frames (FEATURE_AdaptivePlayback)");
                 return true;
             }
         } catch (Exception e) {
@@ -455,7 +464,8 @@ public class MediaCodecHelper {
 
     public static boolean decoderSupportsAdaptivePlayback(MediaCodecInfo decoderInfo, String mimeType) {
         if (isDecoderInList(blacklistedAdaptivePlaybackPrefixes, decoderInfo.getName())) {
-            LimeLog.info("Decoder blacklisted for adaptive playback");
+            //LimeLog.info("Decoder blacklisted for adaptive playback");
+            Log.i(TAG, "Decoder blacklisted for adaptive playback");
             return false;
         }
 
@@ -463,7 +473,8 @@ public class MediaCodecHelper {
             if (decoderInfo.getCapabilitiesForType(mimeType).
                     isFeatureSupported(CodecCapabilities.FEATURE_AdaptivePlayback)) {
                 // This will make getCapabilities() return that adaptive playback is supported
-                LimeLog.info("Adaptive playback supported (FEATURE_AdaptivePlayback)");
+                //LimeLog.info("Adaptive playback supported (FEATURE_AdaptivePlayback)");
+                Log.i(TAG, "Adaptive playback supported (FEATURE_AdaptivePlayback)");
                 return true;
             }
         } catch (Exception e) {
@@ -500,20 +511,6 @@ public class MediaCodecHelper {
         }
     }
 
-    public static boolean decoderSupportsRefFrameInvalidationAvc(String decoderName, int videoHeight) {
-        // Reference frame invalidation is broken on low-end Snapdragon SoCs at 1080p.
-        if (videoHeight > 720 && isLowEndSnapdragon) {
-            return false;
-        }
-
-        // This device seems to crash constantly at 720p, so try disabling
-        // RFI to see if we can get that under control.
-        if (Build.DEVICE.equals("b3") || Build.DEVICE.equals("b5")) {
-            return false;
-        }
-
-        return isDecoderInList(refFrameInvalidationAvcPrefixes, decoderName);
-    }
 
     public static boolean decoderSupportsRefFrameInvalidationHevc(MediaCodecInfo decoderInfo) {
         // HEVC decoders seem to universally support RFI, but it can have huge latency penalties
@@ -525,7 +522,8 @@ public class MediaCodecHelper {
         // buffering frames.
         if (decoderSupportsAndroidRLowLatency(decoderInfo, "video/hevc") ||
                 decoderSupportsKnownVendorLowLatencyOption(decoderInfo.getName())) {
-            LimeLog.info("Enabling HEVC RFI based on low latency option support");
+            //LimeLog.info("Enabling HEVC RFI based on low latency option support");
+            Log.i(TAG, "Enabling HEVC RFI based on low latency option support");
             return true;
         }
 
@@ -536,7 +534,8 @@ public class MediaCodecHelper {
         // We'll use the same heuristics as HEVC for now
         if (decoderSupportsAndroidRLowLatency(decoderInfo, "video/av01") ||
                 decoderSupportsKnownVendorLowLatencyOption(decoderInfo.getName())) {
-            LimeLog.info("Enabling AV1 RFI based on low latency option support");
+            //LimeLog.info("Enabling AV1 RFI based on low latency option support");
+            Log.i(TAG, "Enabling AV1 RFI based on low latency option support");
             return true;
         }
 
@@ -546,10 +545,12 @@ public class MediaCodecHelper {
     public static boolean decoderIsWhitelistedForHevc(MediaCodecInfo decoderInfo) {
         // Software decoders are terrible and we never want to use them
         if (decoderInfo.getName().contains("sw")) {
-            LimeLog.info("Disallowing HEVC on software decoder: " + decoderInfo.getName());
+            //LimeLog.info("Disallowing HEVC on software decoder: " + decoderInfo.getName());
+            Log.i(TAG, "Disallowing HEVC on software decoder: " + decoderInfo.getName());
             return false;
         } else if (!decoderInfo.isHardwareAccelerated() || decoderInfo.isSoftwareOnly()) {
-            LimeLog.info("Disallowing HEVC on software decoder: " + decoderInfo.getName());
+            //LimeLog.info("Disallowing HEVC on software decoder: " + decoderInfo.getName());
+            Log.i(TAG, "Disallowing HEVC on software decoder: " + decoderInfo.getName());
             return false;
         }
 
@@ -557,16 +558,19 @@ public class MediaCodecHelper {
         // HEVC decoder present is fast and modern enough for streaming.
         //
         // [5.3/H-1-1] MUST NOT drop more than 2 frames in 10 seconds (i.e less than 0.333 percent frame drop) for a 1080p 60 fps video session under load.
-        LimeLog.info("Media performance class: " + Build.VERSION.MEDIA_PERFORMANCE_CLASS);
+        //LimeLog.info("Media performance class: " + Build.VERSION.MEDIA_PERFORMANCE_CLASS);
+        Log.i(TAG, "Media performance class: " + Build.VERSION.MEDIA_PERFORMANCE_CLASS);
         if (Build.VERSION.MEDIA_PERFORMANCE_CLASS >= Build.VERSION_CODES.S) {
-            LimeLog.info("Allowing HEVC based on media performance class");
+            //LimeLog.info("Allowing HEVC based on media performance class");
+            Log.i(TAG, "Allowing HEVC based on media performance class");
             return true;
         }
 
         // If the decoder supports FEATURE_LowLatency, we will assume it is fast and modern enough
         // to be preferable for streaming over H.264 decoders.
         if (decoderSupportsAndroidRLowLatency(decoderInfo, "video/hevc")) {
-            LimeLog.info("Allowing HEVC based on FEATURE_LowLatency support");
+            //LimeLog.info("Allowing HEVC based on FEATURE_LowLatency support");
+            Log.i(TAG, "Allowing HEVC based on FEATURE_LowLatency support");
             return true;
         }
 
@@ -577,16 +581,19 @@ public class MediaCodecHelper {
     public static boolean isDecoderWhitelistedForAv1(MediaCodecInfo decoderInfo) {
         // Software decoders are terrible and we never want to use them
         if (decoderInfo.getName().contains("sw")) {
-            LimeLog.info("Disallowing AV1 on software decoder: " + decoderInfo.getName());
+            //LimeLog.info("Disallowing AV1 on software decoder: " + decoderInfo.getName());
+            Log.i(TAG, "Disallowing AV1 on software decoder: " + decoderInfo.getName());
             return false;
         } else if (!decoderInfo.isHardwareAccelerated() || decoderInfo.isSoftwareOnly()) {
-            LimeLog.info("Disallowing AV1 on software decoder: " + decoderInfo.getName());
+            //LimeLog.info("Disallowing AV1 on software decoder: " + decoderInfo.getName());
+            Log.i(TAG, "Disallowing AV1 on software decoder: " + decoderInfo.getName());
             return false;
         }
 
         // Hardware-accelerated AV1 decoders are generally well-supported on modern devices
         // AV1 provides better compression efficiency than HEVC, so prefer it when available
-        LimeLog.info("Whitelisting hardware AV1 decoder: " + decoderInfo.getName());
+        //LimeLog.info("Whitelisting hardware AV1 decoder: " + decoderInfo.getName());
+        Log.i(TAG, "Whitelisting hardware AV1 decoder: " + decoderInfo.getName());
         return true;
     }
 
@@ -641,7 +648,8 @@ public class MediaCodecHelper {
 
                 // Check for preferred decoders
                 if (preferredDecoder.equalsIgnoreCase(codecInfo.getName())) {
-                    LimeLog.info("Preferred decoder choice is " + codecInfo.getName());
+                    //LimeLog.info("Preferred decoder choice is " + codecInfo.getName());
+                    Log.i(TAG, "Preferred decoder choice is " + codecInfo.getName());
                     return codecInfo;
                 }
             }
@@ -653,13 +661,15 @@ public class MediaCodecHelper {
     private static boolean isCodecBlacklisted(MediaCodecInfo codecInfo) {
         // Use the new isSoftwareOnly() function on Android Q
         if (!SHOULD_BYPASS_SOFTWARE_BLOCK && codecInfo.isSoftwareOnly()) {
-            LimeLog.info("Skipping software-only decoder: " + codecInfo.getName());
+            //LimeLog.info("Skipping software-only decoder: " + codecInfo.getName());
+            Log.i(TAG, "Skipping software-only decoder: " + codecInfo.getName());
             return true;
         }
 
         // Check for explicitly blacklisted decoders
         if (isDecoderInList(blacklistedDecoderPrefixes, codecInfo.getName())) {
-            LimeLog.info("Skipping blacklisted decoder: " + codecInfo.getName());
+           //LimeLog.info("Skipping blacklisted decoder: " + codecInfo.getName());
+            Log.i(TAG, "Skipping blacklisted decoder: " + codecInfo.getName());
             return true;
         }
 
@@ -686,7 +696,8 @@ public class MediaCodecHelper {
                         continue;
                     }
 
-                    LimeLog.info("First decoder choice is " + codecInfo.getName());
+                    //LimeLog.info("First decoder choice is " + codecInfo.getName());
+                    Log.i(TAG, "First decoder choice is " + codecInfo.getName());
                     return codecInfo;
                 }
             }
@@ -739,8 +750,9 @@ public class MediaCodecHelper {
                 // Find a decoder that supports the requested video format
                 for (String mime : codecInfo.getSupportedTypes()) {
                     if (mime.equalsIgnoreCase(mimeType)) {
-                        LimeLog.info("Examining decoder capabilities of " + codecInfo.getName() + " (round " + (i + 1) + ")");
+                        //LimeLog.info("Examining decoder capabilities of " + codecInfo.getName() + " (round " + (i + 1) + ")");
 
+                        Log.i(TAG, "Examining decoder capabilities of " + codecInfo.getName() + " (round " + (i + 1) + ")");
                         // Skip blacklisted codecs
                         if (isCodecBlacklisted(codecInfo)) {
                             continue;
@@ -749,19 +761,22 @@ public class MediaCodecHelper {
                         CodecCapabilities caps = codecInfo.getCapabilitiesForType(mime);
 
                         if (i == 0 && !decoderSupportsAndroidRLowLatency(codecInfo, mime)) {
-                            LimeLog.info("Skipping decoder that lacks FEATURE_LowLatency for round 1");
+                           // LimeLog.info("Skipping decoder that lacks FEATURE_LowLatency for round 1");
+                            Log.i(TAG, "Skipping decoder that lacks FEATURE_LowLatency for round 1");
                             continue;
                         }
 
                         if (requiredProfile != -1) {
                             for (CodecProfileLevel profile : caps.profileLevels) {
                                 if (profile.profile == requiredProfile) {
-                                    LimeLog.info("Decoder " + codecInfo.getName() + " supports required profile");
+                                    //LimeLog.info("Decoder " + codecInfo.getName() + " supports required profile");
+                                    Log.i(TAG, "Decoder " + codecInfo.getName() + " supports required profile");
                                     return codecInfo;
                                 }
                             }
 
-                            LimeLog.info("Decoder " + codecInfo.getName() + " does NOT support required profile");
+                            //LimeLog.info("Decoder " + codecInfo.getName() + " does NOT support required profile");
+                            Log.i(TAG, "Decoder " + codecInfo.getName() + " does NOT support required profile");
                         } else {
                             return codecInfo;
                         }

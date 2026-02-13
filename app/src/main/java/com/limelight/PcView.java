@@ -43,8 +43,6 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.widget.AbsListView;
-import android.widget.AdapterView;
-import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ImageButton;
 import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
@@ -52,6 +50,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.AdapterView.AdapterContextMenuInfo;
 
+import androidx.annotation.NonNull;
 import androidx.appcompat.widget.AppCompatImageButton;
 import androidx.fragment.app.FragmentActivity;
 
@@ -60,7 +59,6 @@ import org.xmlpull.v1.XmlPullParserException;
 
 import com.limelight.utils.VulkanHelper;
 
-@SuppressWarnings({"NullableProblems"})
 public class PcView extends FragmentActivity implements AdapterFragmentCallbacks {
     private final static String TAG = "PcView";
     private static final int REQUEST_NOTIFICATION_PERMISSION = 1001;
@@ -98,7 +96,7 @@ public class PcView extends FragmentActivity implements AdapterFragmentCallbacks
     };
 
     @Override
-    public void onConfigurationChanged(Configuration newConfig) {
+    public void onConfigurationChanged(@NonNull Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
 
         // Only reinitialize views if completeOnCreate() was called
@@ -277,7 +275,7 @@ public class PcView extends FragmentActivity implements AdapterFragmentCallbacks
     }
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQUEST_NOTIFICATION_PERMISSION) {
             // Continue with pairing regardless of whether permission was granted
@@ -337,7 +335,7 @@ public class PcView extends FragmentActivity implements AdapterFragmentCallbacks
     }
 
     @Override
-    public void onContextMenuClosed(Menu menu) {
+    public void onContextMenuClosed(@NonNull Menu menu) {
         // For some reason, this gets called again _after_ onPause() is called on this activity.
         // startComputerUpdates() manages this and won't actual start polling until the activity
         // returns to the foreground.
@@ -729,21 +727,17 @@ public class PcView extends FragmentActivity implements AdapterFragmentCallbacks
     @Override
     public void receiveAbsListView(AbsListView listView) {
         listView.setAdapter(pcGridAdapter);
-        listView.setOnItemClickListener(new OnItemClickListener() {
-            @Override
-            public void onItemClick(AdapterView<?> arg0, View arg1, int pos,
-                                    long id) {
-                ComputerObject computer = (ComputerObject) pcGridAdapter.getItem(pos);
-                if (computer.details.state == ComputerDetails.State.UNKNOWN ||
-                        computer.details.state == ComputerDetails.State.OFFLINE) {
-                    // Open the context menu if a PC is offline or refreshing
-                    openContextMenu(arg1);
-                } else if (computer.details.pairState != PairState.PAIRED) {
-                    // Pair an unpaired machine by default
-                    doPair(computer.details);
-                } else {
-                    doAppList(computer.details, false, false);
-                }
+        listView.setOnItemClickListener((arg0, arg1, pos, id) -> {
+            ComputerObject computer = (ComputerObject) pcGridAdapter.getItem(pos);
+            if (computer.details.state == ComputerDetails.State.UNKNOWN ||
+                    computer.details.state == ComputerDetails.State.OFFLINE) {
+                // Open the context menu if a PC is offline or refreshing
+                openContextMenu(arg1);
+            } else if (computer.details.pairState != PairState.PAIRED) {
+                // Pair an unpaired machine by default
+                doPair(computer.details);
+            } else {
+                doAppList(computer.details, false, false);
             }
         });
         registerForContextMenu(listView);
@@ -759,6 +753,7 @@ public class PcView extends FragmentActivity implements AdapterFragmentCallbacks
             this.details = details;
         }
 
+        @NonNull
         @Override
         public String toString() {
             return details.name;

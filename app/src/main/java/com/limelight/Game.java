@@ -80,6 +80,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ToggleButton;
 
+import androidx.annotation.NonNull;
+
 import java.io.ByteArrayInputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -89,7 +91,7 @@ import java.security.cert.X509Certificate;
 import java.util.Locale;
 
 
-@SuppressWarnings({"NullableProblems", "DataFlowIssue", "WriteOnlyObject"})
+@SuppressWarnings({ "DataFlowIssue", "WriteOnlyObject"})
 public class Game extends Activity implements SurfaceHolder.Callback,
         OnGenericMotionListener, OnTouchListener, NvConnectionListener,
         GameGestures, StreamView.InputCallbacks,
@@ -103,6 +105,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     // Five-finger swipe gesture tracking
     private float fiveFingerStartY = 0;
+    @SuppressWarnings("FieldCanBeLocal")
     private float fiveFingerLastY = 0;
     private boolean fiveFingerGestureTriggered = false;
     private boolean fiveFingerGestureActive = false; // True while 5+ fingers are down
@@ -454,6 +457,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             // We must now ensure our display is compatible with HDR10
             if (hdrCaps != null) {
                 // getHdrCapabilities() returns null on Lenovo Lenovo Mirage Solo (vega), Android 8.0
+                //noinspection deprecation
                 for (int hdrType : hdrCaps.getSupportedHdrTypes()) {
                     if (hdrType == Display.HdrCapabilities.HDR_TYPE_HDR10) {
                         willStreamHdr = true;
@@ -593,18 +597,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     usbDriverServiceConnection, Service.BIND_AUTO_CREATE);
         }
 
-        if (!decoderRenderer.isAvcSupported()) {
-            if (spinner != null) {
-                spinner.dismiss();
-                spinner = null;
-            }
-
-            // If we can't find an AVC decoder, we can't proceed
-            Dialog.displayDialog(this, getResources().getString(R.string.conn_error_title),
-                    "This device or ROM doesn't support hardware accelerated H.264 playback.", true);
-            return;
-        }
-
         // The connection will be started when the surface gets created
         streamView.getHolder().addCallback(this);
     }
@@ -661,7 +653,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     @Override
-    public void onConfigurationChanged(Configuration newConfig) {
+    public void onConfigurationChanged(@NonNull Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
 
         // Set requested orientation for possible new screen size
@@ -1026,6 +1018,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
     }
 
+    @SuppressWarnings("deprecation")
     @Override
     public void onMultiWindowModeChanged(boolean isInMultiWindowMode) {
         super.onMultiWindowModeChanged(isInMultiWindowMode);
@@ -1459,10 +1452,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         //
         // For other cases of ACTION_MULTIPLE, we will not report those as handled so hopefully
         // they will be passed to us again as regular singular key events.
+        //noinspection deprecation
         if (event.getKeyCode() != KeyEvent.KEYCODE_UNKNOWN || event.getCharacters() == null) {
             return false;
         }
 
+        //noinspection deprecation
         conn.sendUtf8Text(event.getCharacters());
         return true;
     }
@@ -2699,7 +2694,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             // when the spinner gets displayed. On Android Q, even now
             // is too early to capture. We will delay a second to allow
             // the spinner to dismiss before capturing.
-            Handler h = new Handler();
+            @SuppressWarnings("deprecation") Handler h = new Handler();
             h.postDelayed(() -> setInputGrabState(true), 500);
 
             // Keep the display on
@@ -2760,7 +2755,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+    public void surfaceChanged(@NonNull SurfaceHolder holder, int format, int width, int height) {
         if (!surfaceCreated) {
             throw new IllegalStateException("Surface changed before creation!");
         }
@@ -2778,7 +2773,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     @Override
-    public void surfaceCreated(SurfaceHolder holder) {
+    public void surfaceCreated(@NonNull SurfaceHolder holder) {
         float desiredFrameRate;
 
         surfaceCreated = true;
@@ -2809,7 +2804,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     @Override
-    public void surfaceDestroyed(SurfaceHolder holder) {
+    public void surfaceDestroyed(@NonNull SurfaceHolder holder) {
         if (!surfaceCreated) {
             throw new IllegalStateException("Surface destroyed before creation!");
         }
@@ -2884,6 +2879,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 return handleKeyDown(keyEvent);
             case KeyEvent.ACTION_UP:
                 return handleKeyUp(keyEvent);
+            //noinspection deprecation
             case KeyEvent.ACTION_MULTIPLE:
                 return handleKeyMultiple(keyEvent);
             default:

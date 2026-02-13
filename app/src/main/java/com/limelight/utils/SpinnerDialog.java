@@ -12,6 +12,7 @@ public class SpinnerDialog implements Runnable,OnCancelListener {
     private final String title;
     private final String message;
     private final Activity activity;
+    @SuppressWarnings("deprecation")
     private ProgressDialog progress;
     private final boolean finish;
 
@@ -57,12 +58,8 @@ public class SpinnerDialog implements Runnable,OnCancelListener {
 
     public void setMessage(final String message)
     {
-        activity.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                progress.setMessage(message);
-            }
-        });
+        //noinspection deprecation
+        activity.runOnUiThread(() -> progress.setMessage(message));
     }
 
     @Override
@@ -75,10 +72,13 @@ public class SpinnerDialog implements Runnable,OnCancelListener {
 
         if (progress == null)
         {
+            //noinspection deprecation
             progress = new ProgressDialog(activity);
 
             progress.setTitle(title);
+            //noinspection deprecation
             progress.setMessage(message);
+            //noinspection deprecation
             progress.setProgressStyle(ProgressDialog.STYLE_SPINNER);
             progress.setOnCancelListener(this);
 

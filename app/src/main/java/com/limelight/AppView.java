@@ -320,13 +320,13 @@ public class AppView extends FragmentActivity implements AdapterFragmentCallback
             lastRawApplist = CacheHelper.readInputStreamToString(CacheHelper.openCacheFileForInput(getCacheDir(), "applist", uuidString));
             List<NvApp> applist = NvHTTP.getAppListByReader(new StringReader(lastRawApplist));
             updateUiWithAppList(applist);
-            LimeLog.info("Loaded applist from cache");
+            Log.i(TAG,"Loaded applist from cache");
         } catch (IOException | XmlPullParserException e) {
             if (lastRawApplist != null) {
-                LimeLog.warning("Saved applist corrupted: " + lastRawApplist);
+                Log.w(TAG,"Saved applist corrupted: " + lastRawApplist);
                 Log.e(TAG, "populateAppGridWithCache: "+e.getMessage(), e);
             }
-            LimeLog.info("Loading applist from the network");
+            Log.i(TAG,"Loading applist from the network");
             // We'll need to load from the network
             loadAppsBlocking();
         }

@@ -32,7 +32,7 @@ import java.util.UUID;
 public class ShortcutTrampoline extends Activity {
     private String uuidString;
     private NvApp app;
-    private ArrayList<Intent> intentStack = new ArrayList<>();
+    private final ArrayList<Intent> intentStack = new ArrayList<>();
 
     private int wakeHostTries = 10;
     private ComputerDetails computer;

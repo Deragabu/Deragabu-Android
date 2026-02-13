@@ -22,6 +22,7 @@ public class CacheHelper {
             if (i == path.length - 1) {
                 // This is the file component so now we create parent directories
                 if (createPath) {
+                    //noinspection ResultOfMethodCallIgnored
                     f.mkdirs();
                 }
             }
@@ -36,6 +37,7 @@ public class CacheHelper {
     }
 
     public static void deleteCacheFile(File root, String... path) {
+        //noinspection ResultOfMethodCallIgnored
         openPath(false, root, path).delete();
     }
 

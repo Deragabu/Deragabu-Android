@@ -46,10 +46,15 @@ public class CodecRecoveryManager {
      */
     public interface CodecRecoveryCallback {
         void onFlushDecoder();
+
         void onRestartDecoder();
+
         void onResetDecoder();
+
         boolean onRecreateDecoder();
+
         void onRecoveryFailed(Exception e);
+
         void onClearBuffers();
     }
 
@@ -112,7 +117,8 @@ public class CodecRecoveryManager {
 
         // Try flush first
         if (recoveryType.get() == RECOVERY_TYPE_FLUSH) {
-            LimeLog.warning("Flushing decoder");
+            //LimeLog.warning("Flushing decoder");
+            Log.w(TAG, "Flushing decoder due to CodecException");
             try {
                 callback.onFlushDecoder();
                 recoveryType.set(RECOVERY_TYPE_NONE);
@@ -124,12 +130,14 @@ public class CodecRecoveryManager {
 
         if (recoveryType.get() != RECOVERY_TYPE_NONE) {
             recoveryAttempts++;
-            LimeLog.info("Codec recovery attempt: " + recoveryAttempts);
+            // LimeLog.info("Codec recovery attempt: " + recoveryAttempts);
+            Log.i(TAG, "Codec recovery attempt: " + recoveryAttempts);
         }
 
         // Try restart
         if (recoveryType.get() == RECOVERY_TYPE_RESTART) {
-            LimeLog.warning("Trying to restart decoder after CodecException");
+            //LimeLog.warning("Trying to restart decoder after CodecException");
+            Log.w(TAG, "Trying to restart decoder after CodecException");
             try {
                 callback.onRestartDecoder();
                 recoveryType.set(RECOVERY_TYPE_NONE);
@@ -145,7 +153,8 @@ public class CodecRecoveryManager {
 
         // Try reset
         if (recoveryType.get() == RECOVERY_TYPE_RESET) {
-            LimeLog.warning("Trying to reset decoder after CodecException");
+            //LimeLog.warning("Trying to reset decoder after CodecException");
+            Log.w(TAG, "Trying to reset decoder after CodecException");
             try {
                 callback.onResetDecoder();
                 recoveryType.set(RECOVERY_TYPE_NONE);
@@ -160,7 +169,8 @@ public class CodecRecoveryManager {
 
         // Last resort: recreate
         if (recoveryType.get() == RECOVERY_TYPE_RESET) {
-            LimeLog.warning("Trying to recreate decoder after CodecException");
+            //LimeLog.warning("Trying to recreate decoder after CodecException");
+            Log.w(TAG, "Trying to recreate decoder after CodecException");
             try {
                 if (callback.onRecreateDecoder()) {
                     recoveryType.set(RECOVERY_TYPE_NONE);
@@ -183,7 +193,8 @@ public class CodecRecoveryManager {
     private void waitForRecovery() {
         while (recoveryType.get() != RECOVERY_TYPE_NONE) {
             try {
-                LimeLog.info("Waiting to quiesce decoder threads: " + threadQuiescedFlags);
+                //LimeLog.info("Waiting to quiesce decoder threads: " + threadQuiescedFlags);
+                Log.i(TAG, "Waiting to quiesce decoder threads: " + threadQuiescedFlags);
                 recoveryMonitor.wait(1000);
             } catch (InterruptedException e) {
                 Log.e(TAG, "Interrupted while waiting for recovery: " + e.getMessage(), e);
@@ -200,31 +211,39 @@ public class CodecRecoveryManager {
     public void scheduleRecoverableRecovery(CodecException codecExc) {
         Log.e(TAG, "Scheduling recoverable recovery: " + codecExc.getMessage(), codecExc);
         if (recoveryType.compareAndSet(RECOVERY_TYPE_NONE, RECOVERY_TYPE_RESTART)) {
-            LimeLog.info("Decoder requires restart for recoverable CodecException");
+            //LimeLog.info("Decoder requires restart for recoverable CodecException");
+            Log.i(TAG, "Decoder requires restart for recoverable CodecException");
         } else if (recoveryType.compareAndSet(RECOVERY_TYPE_FLUSH, RECOVERY_TYPE_RESTART)) {
-            LimeLog.info("Decoder flush promoted to restart for recoverable CodecException");
+            //LimeLog.info("Decoder flush promoted to restart for recoverable CodecException");
+            Log.i(TAG, "Decoder flush promoted to restart for recoverable CodecException");
         }
     }
 
     public void scheduleNonRecoverableRecovery(CodecException codecExc) {
         Log.e(TAG, "Scheduling non-recoverable recovery: " + codecExc.getMessage(), codecExc);
         if (recoveryType.compareAndSet(RECOVERY_TYPE_NONE, RECOVERY_TYPE_RESET)) {
-            LimeLog.info("Decoder requires reset for non-recoverable CodecException");
+            //LimeLog.info("Decoder requires reset for non-recoverable CodecException");
+            Log.i(TAG, "Decoder requires reset for non-recoverable CodecException");
         } else if (recoveryType.compareAndSet(RECOVERY_TYPE_FLUSH, RECOVERY_TYPE_RESET)) {
-            LimeLog.info("Decoder flush promoted to reset for non-recoverable CodecException");
+            //LimeLog.info("Decoder flush promoted to reset for non-recoverable CodecException");
+            Log.i(TAG, "Decoder flush promoted to reset for non-recoverable CodecException");
         } else if (recoveryType.compareAndSet(RECOVERY_TYPE_RESTART, RECOVERY_TYPE_RESET)) {
-            LimeLog.info("Decoder restart promoted to reset for non-recoverable CodecException");
+            //LimeLog.info("Decoder restart promoted to reset for non-recoverable CodecException");
+            Log.i(TAG, "Decoder restart promoted to reset for non-recoverable CodecException");
         }
     }
 
     public void scheduleResetRecovery(IllegalStateException e) {
         Log.e(TAG, "Scheduling reset recovery: " + e.getMessage(), e);
         if (recoveryType.compareAndSet(RECOVERY_TYPE_NONE, RECOVERY_TYPE_RESET)) {
-            LimeLog.info("Decoder requires reset for IllegalStateException");
+            //LimeLog.info("Decoder requires reset for IllegalStateException");
+            Log.i(TAG, "Decoder requires reset for IllegalStateException");
         } else if (recoveryType.compareAndSet(RECOVERY_TYPE_FLUSH, RECOVERY_TYPE_RESET)) {
-            LimeLog.info("Decoder flush promoted to reset for IllegalStateException");
+            //LimeLog.info("Decoder flush promoted to reset for IllegalStateException");
+            Log.i(TAG, "Decoder flush promoted to reset for IllegalStateException");
         } else if (recoveryType.compareAndSet(RECOVERY_TYPE_RESTART, RECOVERY_TYPE_RESET)) {
-            LimeLog.info("Decoder restart promoted to reset for IllegalStateException");
+            //LimeLog.info("Decoder restart promoted to reset for IllegalStateException");
+            Log.i(TAG, "Decoder restart promoted to reset for IllegalStateException");
         }
     }
 

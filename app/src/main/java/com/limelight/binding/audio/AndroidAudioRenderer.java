@@ -64,8 +64,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
         int channelConfig;
         int bytesPerFrame;
 
-        switch (audioConfiguration.channelCount)
-        {
+        switch (audioConfiguration.channelCount) {
             case 2:
                 channelConfig = AudioFormat.CHANNEL_OUT_STEREO;
                 break;
@@ -82,11 +81,11 @@ public class AndroidAudioRenderer implements AudioRenderer {
                 channelConfig = 0x000018fc; // AudioFormat.CHANNEL_OUT_7POINT1_SURROUND
                 break;
             default:
-                LimeLog.severe("Decoder returned unhandled channel count");
+                Log.e(TAG, "Decoder returned unhandled channel count");
                 return -1;
         }
 
-        LimeLog.info("Audio channel config: "+String.format("0x%X", channelConfig));
+        Log.i(TAG, "Audio channel config: " + String.format("0x%X", channelConfig));
 
         bytesPerFrame = audioConfiguration.channelCount * samplesPerFrame * 2;
 
@@ -141,8 +140,8 @@ public class AndroidAudioRenderer implements AudioRenderer {
                 case 5:
                     // Large buffer - use minimum recommended size
                     bufferSize = Math.max(AudioTrack.getMinBufferSize(sampleRate,
-                            channelConfig,
-                            AudioFormat.ENCODING_PCM_16BIT),
+                                    channelConfig,
+                                    AudioFormat.ENCODING_PCM_16BIT),
                             bytesPerFrame * 4);
 
                     // Round to next frame
@@ -169,17 +168,18 @@ public class AndroidAudioRenderer implements AudioRenderer {
                 track.play();
 
                 // Successfully created working AudioTrack. We're done here.
-                LimeLog.info("Audio track configuration: "+bufferSize+" "+lowLatency);
+                Log.i(TAG, "Audio track configuration: " + bufferSize + " " + lowLatency);
                 break;
             } catch (Exception e) {
                 // Try to release the AudioTrack if we got far enough
-                Log.e(TAG, "setup: "+e.getMessage(), e);
+                Log.e(TAG, "setup: " + e.getMessage(), e);
                 try {
                     if (track != null) {
                         track.release();
                         track = null;
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception ignored) {
+                }
             }
         }
 
@@ -202,7 +202,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
             consecutiveDrops++;
             // Only log occasionally to avoid log spam
             if (consecutiveDrops == 1 || consecutiveDrops % 10 == 0) {
-                LimeLog.info("Dropping audio frame, pending: " + pendingMs + " ms (drops: " + consecutiveDrops + ")");
+                Log.i(TAG, "Dropping audio frame, pending: " + pendingMs + " ms (drops: " + consecutiveDrops + ")");
             }
             // Mark that we need fade-in when resuming to avoid pops
             needsFadeIn = true;
@@ -217,7 +217,7 @@ public class AndroidAudioRenderer implements AudioRenderer {
 
         // Reset drop counter when we successfully write
         if (consecutiveDrops > 0 && pendingMs < TARGET_PENDING_AUDIO_MS) {
-            LimeLog.info("Audio recovered after " + consecutiveDrops + " drops, pending: " + pendingMs + " ms");
+            Log.i(TAG, "Audio recovered after " + consecutiveDrops + " drops, pending: " + pendingMs + " ms");
             consecutiveDrops = 0;
         }
 

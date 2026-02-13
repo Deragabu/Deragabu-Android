@@ -38,10 +38,12 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.util.Base64;
+import android.util.Log;
 
 import com.limelight.nvstream.http.LimelightCryptoProvider;
 
 public class AndroidCryptoProvider implements LimelightCryptoProvider {
+    private final static String TAG = "AndroidCryptoProvider";
 
     private final File certFile;
     private final File keyFile;
@@ -84,7 +86,7 @@ public class AndroidCryptoProvider implements LimelightCryptoProvider {
 
         // If either file was missing, we definitely can't succeed
         if (certBytes == null || keyBytes == null) {
-            LimeLog.info("Missing cert or key; need to generate a new one");
+            Log.i(TAG, "Missing cert or key; need to generate a new one");
             return false;
         }
 
@@ -96,19 +98,20 @@ public class AndroidCryptoProvider implements LimelightCryptoProvider {
             key = keyFactory.generatePrivate(new PKCS8EncodedKeySpec(keyBytes));
         } catch (CertificateException e) {
             // May happen if the cert is corrupt
-            LimeLog.warning("Corrupted certificate");
+            Log.e(TAG, "Corrupted certificate", e);
             return false;
         } catch (NoSuchAlgorithmException e) {
             throw new RuntimeException(e);
         } catch (InvalidKeySpecException e) {
             // May happen if the key is corrupt
-            LimeLog.warning("Corrupted key");
+            Log.e(TAG, "Corrupted private key", e);
             return false;
         }
 
         return true;
     }
 
+    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     @SuppressLint("TrulyRandom")
     private boolean generateCertKeyPair() {
         byte[] snBytes = new byte[8];
@@ -138,7 +141,7 @@ public class AndroidCryptoProvider implements LimelightCryptoProvider {
         X500Name name = nameBuilder.build();
 
         X509v3CertificateBuilder certBuilder = new X509v3CertificateBuilder(name, serial, now, expirationDate, Locale.ENGLISH, name,
-            SubjectPublicKeyInfo.getInstance(keyPair.getPublic().getEncoded()));
+                SubjectPublicKeyInfo.getInstance(keyPair.getPublic().getEncoded()));
 
         try {
             ContentSigner sigGen = new JcaContentSignerBuilder("SHA256withRSA").setProvider(bcProvider).build(keyPair.getPrivate());
@@ -148,7 +151,7 @@ public class AndroidCryptoProvider implements LimelightCryptoProvider {
             throw new RuntimeException(e);
         }
 
-        LimeLog.info("Generated a new key pair");
+        Log.i(TAG, "Generated new certificate and key pair");
 
         // Save the resulting pair
         saveCertKeyPair();
@@ -179,11 +182,11 @@ public class AndroidCryptoProvider implements LimelightCryptoProvider {
             // Write the private out in PKCS8 format
             keyOut.write(key.getEncoded());
 
-            LimeLog.info("Saved generated key pair to disk");
+            Log.i(TAG, "Saved certificate and key to disk");
         } catch (IOException e) {
             // This isn't good because it means we'll have
             // to re-pair next time
-            e.printStackTrace();
+            Log.e(TAG, "Failed to save certificate and key", e);
         }
     }
 

@@ -24,6 +24,8 @@ import java.security.cert.CertificateEncodingException;
 public class ServerHelper {
     private static final String TAG = "ServerHelper";
 
+    public static final String CONNECTION_TEST_SERVER = "android.conntest.moonlight-stream.org";
+
 
     public static ComputerDetails.AddressTuple getCurrentAddressFromComputer(ComputerDetails computer) throws IOException {
         if (computer.activeAddress == null) {

@@ -1,5 +1,7 @@
 package com.limelight.utils;
 
+import android.util.Log;
+
 import com.limelight.nvstream.http.ComputerDetails;
 
 import java.io.IOException;
@@ -11,6 +13,7 @@ import java.net.Socket;
  * Uses TCP connect to verify if a host is reachable on a specific port.
  */
 public class TcpReachability {
+    private static final String TAG = "TcpReachability";
 
     // Default timeout for TCP connection check (milliseconds)
     public static final int DEFAULT_TCP_TIMEOUT_MS = 2000;
@@ -41,8 +44,8 @@ public class TcpReachability {
      * Check if a host is reachable by attempting a TCP connection to the specified port.
      * Returns a result object containing success status and latency.
      *
-     * @param host The hostname or IP address to check
-     * @param port The port number to connect to
+     * @param host      The hostname or IP address to check
+     * @param port      The port number to connect to
      * @param timeoutMs Connection timeout in milliseconds
      * @return TcpPingResult containing success status and latency in milliseconds
      */
@@ -55,12 +58,12 @@ public class TcpReachability {
         try (Socket socket = new Socket()) {
             socket.connect(new InetSocketAddress(host, port), timeoutMs);
             long latency = System.currentTimeMillis() - startTime;
-            LimeLog.info("TCP ping successful for " + host + ":" + port + " - latency: " + latency + "ms");
+            Log.i(TAG, "TCP ping successful for " + host + ":" + port + " - latency: " + latency + "ms");
             return new TcpPingResult(true, latency, host, port, null);
         } catch (IOException e) {
             long latency = System.currentTimeMillis() - startTime;
             String errorMsg = e.getMessage();
-            LimeLog.info("TCP ping failed for " + host + ":" + port + " - " + errorMsg);
+            Log.i(TAG, "TCP ping failed for " + host + ":" + port + " - " + errorMsg,e);
             return new TcpPingResult(false, latency, host, port, errorMsg);
         }
     }
@@ -68,8 +71,8 @@ public class TcpReachability {
     /**
      * Check if a host is reachable by attempting a TCP connection to the specified port.
      *
-     * @param host The hostname or IP address to check
-     * @param port The port number to connect to
+     * @param host      The hostname or IP address to check
+     * @param port      The port number to connect to
      * @param timeoutMs Connection timeout in milliseconds
      * @return true if the connection was successful, false otherwise
      */
@@ -83,7 +86,7 @@ public class TcpReachability {
             return true;
         } catch (IOException e) {
             // Connection failed - host is not reachable
-            LimeLog.info("TCP ping failed for " + host + ":" + port + " - " + e.getMessage());
+            Log.i(TAG,"TCP ping failed for " + host + ":" + port + " - " + e.getMessage(),e);
             return false;
         }
     }
@@ -103,7 +106,7 @@ public class TcpReachability {
     /**
      * Check if an address tuple is reachable via TCP.
      *
-     * @param address The address tuple containing host and port
+     * @param address   The address tuple containing host and port
      * @param timeoutMs Connection timeout in milliseconds
      * @return true if the connection was successful, false otherwise
      */
@@ -140,7 +143,7 @@ public class TcpReachability {
     /**
      * Perform a TCP ping on an address tuple and return detailed results.
      *
-     * @param address The address tuple containing host and port
+     * @param address   The address tuple containing host and port
      * @param timeoutMs Connection timeout in milliseconds
      * @return TcpPingResult containing success status and latency
      */
@@ -177,7 +180,7 @@ public class TcpReachability {
 
         for (ComputerDetails.AddressTuple address : addresses) {
             if (isAddressReachable(address, timeoutMs)) {
-                LimeLog.info("Found reachable address: " + address);
+                Log.i(TAG,"Found reachable address: " + address);
                 return address;
             }
         }

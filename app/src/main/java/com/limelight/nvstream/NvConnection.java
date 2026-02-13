@@ -147,7 +147,7 @@ public class NvConnection {
                 try {
                     serverAddress = resolveServerAddress();
                 } catch (IOException e) {
-                    Log.e(TAG, "detectServerConnectionType: "+e.getMessage(), e);
+                    Log.e(TAG, "detectServerConnectionType: " + e.getMessage(), e);
 
                     // We can't decide without being able to resolve the server address
                     return StreamConfiguration.STREAM_CFG_AUTO;
@@ -216,7 +216,7 @@ public class NvConnection {
                 // Check for cellular connection
                 if (netCaps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
                     if (bitrate > CELLULAR_MAX_BITRATE_KBPS) {
-                        LimeLog.info("Cellular network detected, capping bitrate from " + bitrate +
+                        Log.i(TAG, "Cellular network detected, capping bitrate from " + bitrate +
                                 " kbps to " + CELLULAR_MAX_BITRATE_KBPS + " kbps");
                         return CELLULAR_MAX_BITRATE_KBPS;
                     }
@@ -225,7 +225,7 @@ public class NvConnection {
                 else if (netCaps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
                     // Determine WiFi standard (API 30+)
                     android.net.wifi.WifiManager wifiManager =
-                        (android.net.wifi.WifiManager) appContext.getSystemService(Context.WIFI_SERVICE);
+                            (android.net.wifi.WifiManager) appContext.getSystemService(Context.WIFI_SERVICE);
                     if (wifiManager != null) {
                         android.net.wifi.WifiInfo wifiInfo = wifiManager.getConnectionInfo();
                         if (wifiInfo != null) {
@@ -235,7 +235,7 @@ public class NvConnection {
 
                             // Determine WiFi standard and apply appropriate cap
                             if (wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_LEGACY ||
-                                wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_11N) {
+                                    wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_11N) {
                                 // WiFi 4 (802.11n) or older
                                 maxBitrate = WIFI_4_MAX_BITRATE_KBPS;
                                 standardName = "WiFi 4 (802.11n)";
@@ -244,16 +244,16 @@ public class NvConnection {
                                 maxBitrate = WIFI_5_MAX_BITRATE_KBPS;
                                 standardName = "WiFi 5 (802.11ac)";
                             } else if (wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_11AX ||
-                                       wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_11BE) {
+                                    wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_11BE) {
                                 // WiFi 6/6E/7 (802.11ax/be) - no cap needed
                                 standardName = wifiStandard == android.net.wifi.ScanResult.WIFI_STANDARD_11BE ?
-                                    "WiFi 7 (802.11be)" : "WiFi 6/6E (802.11ax)";
-                                LimeLog.info(standardName + " detected, no bitrate cap applied");
+                                        "WiFi 7 (802.11be)" : "WiFi 6/6E (802.11ax)";
+                                Log.i(TAG, standardName + " detected, no bitrate cap applied");
                                 return bitrate;
                             }
 
                             if (bitrate > maxBitrate) {
-                                LimeLog.info(standardName + " detected, capping bitrate from " +
+                                Log.i(TAG, standardName + " detected, capping bitrate from " +
                                         bitrate + " kbps to " + maxBitrate + " kbps");
                                 return maxBitrate;
                             }
@@ -340,7 +340,7 @@ public class NvConnection {
             // Apply network-based bitrate cap for cellular connections
             context.negotiatedBitrate = applyNetworkBitrateCap(context.negotiatedBitrate);
 
-            LimeLog.info("Predicted video format: 0x" + Integer.toHexString(predictedVideoFormat) +
+            Log.i(TAG, "Predicted video format: 0x" + Integer.toHexString(predictedVideoFormat) +
                     ", negotiated bitrate: " + context.negotiatedBitrate + " kbps");
         } else {
             // Use the user-configured bitrate
@@ -355,7 +355,7 @@ public class NvConnection {
 
         // If the client did not provide an exact app ID, do a lookup with the applist
         if (!context.streamConfig.getApp().isInitialized()) {
-            LimeLog.info("Using deprecated app lookup method - Please specify an app ID in your StreamConfiguration instead");
+            Log.i(TAG, "Using deprecated app lookup method - Please specify an app ID in your StreamConfiguration instead");
             app = h.getAppByName(context.streamConfig.getApp().getAppName());
             if (app == null) {
                 context.connListener.displayMessage("The app " + context.streamConfig.getApp().getAppName() + " is not in GFE app list");
@@ -391,7 +391,7 @@ public class NvConnection {
                 }
             }
 
-            LimeLog.info("Resumed existing game session");
+            Log.i(TAG, "Resumed existing game session");
             return true;
         } else {
             return launchNotRunningApp(h, context);
@@ -427,7 +427,7 @@ public class NvConnection {
             return false;
         }
 
-        LimeLog.info("Launched new game session");
+        Log.i(TAG, "Launched new game session");
 
         return true;
     }
@@ -448,12 +448,12 @@ public class NvConnection {
                 }
                 context.connListener.stageComplete(appName);
             } catch (HostHttpResponseException e) {
-                Log.e(TAG, "run: "+e.getMessage(), e);
+                Log.e(TAG, "run: " + e.getMessage(), e);
                 context.connListener.displayMessage(e.getMessage());
                 context.connListener.stageFailed(appName, 0, e.getErrorCode());
                 return;
             } catch (XmlPullParserException | IOException e) {
-                Log.e(TAG, "run: "+e.getMessage(), e);
+                Log.e(TAG, "run: " + e.getMessage(), e);
                 context.connListener.displayMessage(e.getMessage());
                 context.connListener.stageFailed(appName, MoonBridge.ML_PORT_FLAG_TCP_47984 | MoonBridge.ML_PORT_FLAG_TCP_47989, 0);
                 return;

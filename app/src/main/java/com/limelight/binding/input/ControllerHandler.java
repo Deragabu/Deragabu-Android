@@ -47,6 +47,7 @@ import java.util.Map;
 import java.util.Objects;
 
 public class ControllerHandler implements InputManager.InputDeviceListener, UsbDriverListener {
+    private static final String TAG = "ControllerHandler";
 
     private static final int MAXIMUM_BUMPER_UP_DELAY_MS = 100;
 
@@ -217,7 +218,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     public void onInputDeviceRemoved(int deviceId) {
         InputDeviceContext context = inputDeviceContexts.get(deviceId);
         if (context != null) {
-            LimeLog.info("Removed controller: " + context.name + " (" + deviceId + ")");
+            Log.i(TAG,"Removed controller: " + context.name + " (" + deviceId + ")");
             releaseControllerNumber(context);
             context.destroy();
             inputDeviceContexts.remove(deviceId);
@@ -239,7 +240,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             return;
         }
 
-        LimeLog.info("Device changed: " + existingContext.name + " (" + deviceId + ")");
+        Log.i(TAG,"Device changed: " + existingContext.name + " (" + deviceId + ")");
 
         // Migrate the existing context into this new one by moving any stateful elements
         InputDeviceContext newContext = createInputDeviceContextForDevice(device);
@@ -334,7 +335,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             }
 
             if (hasJoystickAxes(dev)) {
-                LimeLog.info("Counting InputDevice: " + dev.getName());
+                Log.i(TAG,"Counting InputDevice: " + dev.getName());
                 mask |= (short) (1 << count++);
             }
         }
@@ -348,14 +349,14 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     // otherwise we will double count them.
                     if (UsbDriverService.shouldClaimDevice(dev, false) &&
                             !UsbDriverService.isRecognizedInputDevice(dev)) {
-                        LimeLog.info("Counting UsbDevice: " + dev.getDeviceName());
+                        Log.i(TAG,"Counting UsbDevice: " + dev.getDeviceName());
                         mask |= (short) (1 << count++);
                     }
                 }
             }
         }
 
-        LimeLog.info("Enumerated " + count + " gamepads");
+        Log.i(TAG,"Enumerated " + count + " gamepads");
         return mask;
     }
 
@@ -413,7 +414,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     private void releaseControllerNumber(GenericControllerContext context) {
         // If we reserved a controller number, remove that reservation
         if (context.reservedControllerNumber) {
-            LimeLog.info("Controller number " + context.controllerNumber + " is now available");
+            Log.i(TAG, "Controller number " + context.controllerNumber + " is now available");
             currentControllers &= (short) ~(1 << context.controllerNumber);
         }
 
@@ -461,14 +462,14 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         if (context instanceof InputDeviceContext) {
             InputDeviceContext devContext = (InputDeviceContext) context;
 
-            LimeLog.info(devContext.name + " (" + context.id + ") needs a controller number assigned");
+            Log.i(TAG, devContext.name + " (" + context.id + ") needs a controller number assigned");
             if (!devContext.external) {
-                LimeLog.info("Built-in buttons hardcoded as controller 0");
+                Log.i(TAG, "Built-in buttons hardcoded as controller 0");
                 context.controllerNumber = 0;
             } else if (prefConfig.multiController && devContext.hasJoystickAxes) {
                 context.controllerNumber = 0;
 
-                LimeLog.info("Reserving the next available controller number");
+                Log.i(TAG, "Reserving the next available controller number");
                 for (short i = 0; i < MAX_GAMEPADS; i++) {
                     if ((currentControllers & (1 << i)) == 0) {
                         // Found an unused controller value
@@ -495,7 +496,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 if (!isAssociatedJoystick(devContext.inputDevice, associatedDevice)) {
                     associatedDevice = InputDevice.getDevice(devContext.id - 1);
                     if (!isAssociatedJoystick(devContext.inputDevice, associatedDevice)) {
-                        LimeLog.info("No associated joystick device found");
+                        Log.i(TAG, "No associated joystick device found");
                         associatedDevice = null;
                     }
                 }
@@ -517,10 +518,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     // Propagate the associated controller number
                     context.controllerNumber = associatedDeviceContext.controllerNumber;
 
-                    LimeLog.info("Propagated controller number from " + associatedDeviceContext.name);
+                    Log.i(TAG, "Propagated controller number from " + associatedDeviceContext.name);
                 }
             } else {
-                LimeLog.info("Not reserving a controller number");
+                Log.i(TAG, "Not reserving a controller number");
                 context.controllerNumber = 0;
             }
 
@@ -532,7 +533,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             if (prefConfig.multiController) {
                 context.controllerNumber = 0;
 
-                LimeLog.info("Reserving the next available controller number");
+                Log.i(TAG, "Reserving the next available controller number");
                 for (short i = 0; i < MAX_GAMEPADS; i++) {
                     if ((currentControllers & (1 << i)) == 0) {
                         // Found an unused controller value
@@ -547,12 +548,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                     }
                 }
             } else {
-                LimeLog.info("Not reserving a controller number");
+                Log.i(TAG, "Not reserving a controller number");
                 context.controllerNumber = 0;
             }
         }
 
-        LimeLog.info("Assigned as controller " + context.controllerNumber);
+        Log.i(TAG, "Assigned as controller " + context.controllerNumber);
         context.assignedControllerNumber = true;
 
         // Report attributes of this new controller to the host
@@ -604,7 +605,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 deviceName.equalsIgnoreCase("NVIDIA Corporation NVIDIA Controller v01.02") || // Gamepad on Shield Portable (?)
                 deviceName.equalsIgnoreCase("GR0006") // Gamepad on Logitech G Cloud
         ) {
-            LimeLog.info(dev.getName() + " is internal by hardcoded mapping");
+            Log.i(TAG, dev.getName() + " is internal by hardcoded mapping");
             return false;
         }
 
@@ -677,10 +678,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         InputDeviceContext context = new InputDeviceContext();
         String devName = dev.getName();
 
-        LimeLog.info("Creating controller context for device: " + devName);
-        LimeLog.info("Vendor ID: " + dev.getVendorId());
-        LimeLog.info("Product ID: " + dev.getProductId());
-        LimeLog.info(dev.toString());
+        Log.i(TAG, "Creating controller context for device: " + devName);
+        Log.i(TAG, "Vendor ID: " + dev.getVendorId());
+        Log.i(TAG, "Product ID: " + dev.getProductId());
+        Log.i(TAG, dev.toString());
 
         context.inputDevice = dev;
         context.name = devName;
@@ -791,10 +792,10 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             if (rxRange != null && ryRange != null && devName != null) {
                 if (dev.getVendorId() == 0x054c) { // Sony
                     if (dev.hasKeys(KeyEvent.KEYCODE_BUTTON_C)[0]) {
-                        LimeLog.info("Detected non-standard DualShock 4 mapping");
+                        Log.i(TAG, "Detected non-standard DualShock 4 mapping");
                         context.isNonStandardDualShock4 = true;
                     } else {
-                        LimeLog.info("Detected DualShock 4 (Linux standard mapping)");
+                        Log.i(TAG, "Detected DualShock 4 (Linux standard mapping)");
                         context.usesLinuxGamepadStandardFaceButtons = true;
                     }
                 }
@@ -947,8 +948,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             context.hasMode = false;
         }
 
-        LimeLog.info("Analog stick deadzone: " + context.leftStickDeadzoneRadius + " " + context.rightStickDeadzoneRadius);
-        LimeLog.info("Trigger deadzone: " + context.triggerDeadzone);
+        Log.i(TAG, "Analog stick deadzone: " + context.leftStickDeadzoneRadius + " " + context.rightStickDeadzoneRadius);
+        Log.i(TAG, "Trigger deadzone: " + context.triggerDeadzone);
 
         return context;
     }
@@ -1956,7 +1957,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 // Odd segments: weak or off
                 if (i % 2 == 0) {
                     // Strong pulse - LONG duration for low freq feel
-                    timings[i] = basePulseTime * 2;  // 80-120ms on
+                    timings[i] = basePulseTime * 2L;  // 80-120ms on
                     float pulseStrength = 0.85f + 0.15f * (float) Math.cos(phase * Math.PI);
                     amplitudes[i] = Math.min(255, (int) (effectiveLowFreq * pulseStrength));
                 } else {
@@ -2159,7 +2160,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             return composition.compose();
         } catch (Exception e) {
             // Some devices may not support all primitives, fall back to null
-            LimeLog.warning("Haptic composition failed: " + e.getMessage());
+            Log.w(TAG, "Haptic composition failed: " + e.getMessage());
             return null;
         }
     }
@@ -2284,7 +2285,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
             return builder.build();
         } catch (Exception e) {
-            LimeLog.warning("WaveformEnvelopeBuilder failed: " + e.getMessage());
+            Log.w(TAG, "WaveformEnvelopeBuilder failed: " + e.getMessage());
             return null;
         }
     }
@@ -2307,7 +2308,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      */
     @android.annotation.SuppressLint("NewApi")
     private void buildDualMotorEnvelope(VibrationEffect.WaveformEnvelopeBuilder builder,
-                                        float lowFreqScale, float highFreqScale, int cycleDurationMs) {
+                                        float lowFreqScale, float highFreqScale, @SuppressWarnings("SameParameterValue") int cycleDurationMs) {
         // Calculate blend ratio for mixing both motors
         float blendRatio = lowFreqScale / (lowFreqScale + highFreqScale);  // 0-1, higher = more low freq
 
@@ -2363,7 +2364,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      */
     @android.annotation.SuppressLint("NewApi")
     private void buildLowFreqEnvelope(VibrationEffect.WaveformEnvelopeBuilder builder,
-                                      float lowFreqScale, int cycleDurationMs) {
+                                      float lowFreqScale, @SuppressWarnings("SameParameterValue") int cycleDurationMs) {
         // XInput left motor characteristic frequency (~20-30Hz)
         final float LOW_FREQ_HZ = 25.0f;
 
@@ -2407,7 +2408,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
      */
     @android.annotation.SuppressLint("NewApi")
     private void buildHighFreqEnvelope(VibrationEffect.WaveformEnvelopeBuilder builder,
-                                       float highFreqScale, int cycleDurationMs) {
+                                       float highFreqScale, @SuppressWarnings("SameParameterValue") int cycleDurationMs) {
         // XInput right motor characteristic frequency (~100-150Hz)
         final float HIGH_FREQ_HZ = 120.0f;
 
@@ -2480,7 +2481,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
             try {
                 effect = createWaveformEnvelopeEffect(perceivedLow, perceivedHigh);
             } catch (Exception e) {
-                LimeLog.info("WaveformEnvelopeBuilder unavailable, trying fallback methods");
+                Log.i(TAG, "WaveformEnvelopeBuilder unavailable, trying fallback methods");
             }
         }
 
@@ -2491,7 +2492,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 effect = createHapticCompositionEffect(perceivedLow, perceivedHigh);
             } catch (Exception e) {
                 // Haptic composition not fully supported, fall through to waveform
-                LimeLog.info("Haptic composition unavailable, using waveform fallback");
+                Log.i(TAG, "Haptic composition unavailable, using waveform fallback");
             }
         }
 
@@ -3311,7 +3312,7 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     public void deviceRemoved(AbstractController controller) {
         UsbDeviceContext context = usbDeviceContexts.get(controller.getControllerId());
         if (context != null) {
-            LimeLog.info("Removed controller: " + controller.getControllerId());
+            Log.i(TAG, "Removed controller: " + controller.getControllerId());
             releaseControllerNumber(context);
             context.destroy();
             usbDeviceContexts.remove(controller.getControllerId());

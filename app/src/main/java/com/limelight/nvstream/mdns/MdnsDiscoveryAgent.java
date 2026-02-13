@@ -1,5 +1,7 @@
 package com.limelight.nvstream.mdns;
 
+import android.util.Log;
+
 import java.net.Inet4Address;
 import java.net.Inet6Address;
 import java.util.ArrayList;
@@ -7,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 
 public abstract class MdnsDiscoveryAgent {
+    private static final String TAG = "MdnsDiscoveryAgent";
     protected MdnsDiscoveryListener listener;
 
     protected HashSet<MdnsComputer> computers = new HashSet<>();
@@ -20,13 +23,14 @@ public abstract class MdnsDiscoveryAgent {
     public abstract void stopDiscovery();
 
     protected void reportNewComputer(String name, int port, Inet4Address[] v4Addrs, Inet6Address[] v6Addrs) {
-        LimeLog.info("mDNS: "+name+" has "+v4Addrs.length+" IPv4 addresses");
-        LimeLog.info("mDNS: "+name+" has "+v6Addrs.length+" IPv6 addresses");
+        Log.i(TAG, "reportNewComputer: " + name + " has " + v4Addrs.length + " IPv4 addresses");
+        Log.i(TAG, "reportNewComputer: " + name + " has " + v6Addrs.length + " IPv6 addresses");
 
         Inet6Address v6GlobalAddr = getBestIpv6Address(v6Addrs);
 
         // Add a computer object for each IPv4 address reported by the PC
         for (Inet4Address v4Addr : v4Addrs) {
+            //noinspection SynchronizeOnNonFinalField
             synchronized (computers) {
                 MdnsComputer computer = new MdnsComputer(name, v4Addr, v6GlobalAddr, port);
                 if (computers.add(computer)) {
@@ -51,6 +55,7 @@ public abstract class MdnsDiscoveryAgent {
     }
 
     public List<MdnsComputer> getComputerSet() {
+        //noinspection SynchronizeOnNonFinalField
         synchronized (computers) {
             return new ArrayList<>(computers);
         }
@@ -73,7 +78,7 @@ public abstract class MdnsDiscoveryAgent {
     protected static Inet6Address getLinkLocalAddress(Inet6Address[] addresses) {
         for (Inet6Address addr : addresses) {
             if (addr.isLinkLocalAddress()) {
-                LimeLog.info("Found link-local address: "+addr.getHostAddress());
+                Log.i(TAG, "Found link-local address: " + addr.getHostAddress());
                 return addr;
             }
         }
@@ -94,7 +99,7 @@ public abstract class MdnsDiscoveryAgent {
             for (Inet6Address addr : addresses) {
                 if (addr.isLinkLocalAddress() || addr.isSiteLocalAddress() || addr.isLoopbackAddress()) {
                     // Link-local, site-local, and loopback aren't global
-                    LimeLog.info("Ignoring non-global address: "+addr.getHostAddress());
+                    Log.i(TAG, "Ignoring non-global address: " + addr.getHostAddress());
                     continue;
                 }
 
@@ -103,19 +108,19 @@ public abstract class MdnsDiscoveryAgent {
                 // 2002::/16
                 if (addrBytes[0] == 0x20 && addrBytes[1] == 0x02) {
                     // 6to4 has horrible performance
-                    LimeLog.info("Ignoring 6to4 address: "+addr.getHostAddress());
+                    Log.i(TAG, "Ignoring 6to4 address: " + addr.getHostAddress());
                     continue;
                 }
                 // 2001::/32
                 else if (addrBytes[0] == 0x20 && addrBytes[1] == 0x01 && addrBytes[2] == 0x00 && addrBytes[3] == 0x00) {
                     // Teredo also has horrible performance
-                    LimeLog.info("Ignoring Teredo address: "+addr.getHostAddress());
+                    Log.i(TAG, "Ignoring Teredo address: " + addr.getHostAddress());
                     continue;
                 }
                 // fc00::/7
                 else if ((addrBytes[0] & 0xfe) == 0xfc) {
                     // ULAs aren't global
-                    LimeLog.info("Ignoring ULA: "+addr.getHostAddress());
+                    Log.i(TAG, "Ignoring ULA: " + addr.getHostAddress());
                     continue;
                 }
 
@@ -132,7 +137,7 @@ public abstract class MdnsDiscoveryAgent {
                     }
 
                     if (!matched) {
-                        LimeLog.info("Ignoring non-matching global address: "+addr.getHostAddress());
+                        Log.i(TAG, "Ignoring address with non-matching interface identifier: " + addr.getHostAddress());
                         continue;
                     }
                 }

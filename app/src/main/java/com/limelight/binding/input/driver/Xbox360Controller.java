@@ -3,12 +3,14 @@ package com.limelight.binding.input.driver;
 import android.hardware.usb.UsbConstants;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
+import android.util.Log;
 
 import com.limelight.nvstream.input.ControllerPacket;
 
 import java.nio.ByteBuffer;
 
 public class Xbox360Controller extends AbstractXboxController {
+    private static final String TAG = "Xbox360Controller";
     private static final int XB360_IFACE_SUBCLASS = 93;
     private static final int XB360_IFACE_PROTOCOL = 1; // Wired only
 
@@ -71,7 +73,8 @@ public class Xbox360Controller extends AbstractXboxController {
     @Override
     protected boolean handleRead(ByteBuffer buffer) {
         if (buffer.remaining() < 14) {
-            LimeLog.severe("Read too small: "+buffer.remaining());
+            Log.w(TAG, "Read too small: "+buffer.remaining());
+            //LimeLog.severe("Read too small: "+buffer.remaining());
             return false;
         }
 
@@ -123,16 +126,15 @@ public class Xbox360Controller extends AbstractXboxController {
         return true;
     }
 
-    private boolean sendLedCommand(byte command) {
+    private void sendLedCommand(byte command) {
         byte[] commandBuffer = {0x01, 0x03, command};
 
         int res = connection.bulkTransfer(outEndpt, commandBuffer, commandBuffer.length, 3000);
         if (res != commandBuffer.length) {
-            LimeLog.warning("LED set transfer failed: "+res);
-            return false;
+            Log.w(TAG, "LED set transfer failed: "+res);
+            //LimeLog.warning("LED set transfer failed: "+res);
         }
 
-        return true;
     }
 
     @Override
@@ -153,7 +155,8 @@ public class Xbox360Controller extends AbstractXboxController {
         };
         int res = connection.bulkTransfer(outEndpt, data, data.length, 100);
         if (res != data.length) {
-            LimeLog.warning("Rumble transfer failed: "+res);
+            //LimeLog.warning("Rumble transfer failed: "+res);
+            Log.e(TAG, "Rumble transfer failed: "+res);
         }
     }
 

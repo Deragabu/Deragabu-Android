@@ -1,6 +1,7 @@
 package com.limelight.grid.assets;
 
 import android.content.Context;
+import android.util.Log;
 
 import com.limelight.binding.PlatformBinding;
 import com.limelight.nvstream.http.NvHTTP;
@@ -10,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 
 public class NetworkAssetLoader {
+        private static final String TAG = "NetworkAssetLoader";
     private final Context context;
     private final String uniqueId;
 
@@ -28,10 +30,10 @@ public class NetworkAssetLoader {
         } catch (IOException ignored) {}
 
         if (in != null) {
-            LimeLog.info("Network asset load complete: " + tuple);
+            Log.i(TAG,"Network asset load complete: " + tuple);
         }
         else {
-            LimeLog.info("Network asset load failed: " + tuple);
+           Log.i(TAG,"Network asset load failed: " + tuple);
         }
 
         return in;

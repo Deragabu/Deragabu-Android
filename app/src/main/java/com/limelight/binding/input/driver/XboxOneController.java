@@ -3,6 +3,7 @@ package com.limelight.binding.input.driver;
 import android.hardware.usb.UsbConstants;
 import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
+import android.util.Log;
 
 import com.limelight.nvstream.input.ControllerPacket;
 import com.limelight.nvstream.jni.MoonBridge;
@@ -11,6 +12,7 @@ import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 public class XboxOneController extends AbstractXboxController {
+    private static final String TAG = "XboxOneController";
 
     private static final int XB1_IFACE_SUBCLASS = 71;
     private static final int XB1_IFACE_PROTOCOL = 208;
@@ -37,7 +39,7 @@ public class XboxOneController extends AbstractXboxController {
     private static final byte[] RUMBLE_INIT2 = {0x09, 0x00, 0x00, 0x09, 0x00, 0x0F, 0x00, 0x00,
             0x00, 0x00, 0x00, 0x00, 0x00};
 
-    private static InitPacket[] INIT_PKTS = {
+    private static final InitPacket[] INIT_PKTS = {
             new InitPacket(0x0e6f, 0x0165, HORI_INIT),
             new InitPacket(0x0f0d, 0x0067, HORI_INIT),
             new InitPacket(0x0000, 0x0000, FW2015_INIT),
@@ -109,7 +111,8 @@ public class XboxOneController extends AbstractXboxController {
         {
             case 0x20:
                 if (buffer.remaining() < 17) {
-                    LimeLog.severe("XBone button/axis read too small: "+buffer.remaining());
+                    //LimeLog.severe("XBone button/axis read too small: "+buffer.remaining());
+                    Log.w(TAG, "XBone button/axis read too small: "+buffer.remaining());
                     return false;
                 }
 
@@ -119,7 +122,8 @@ public class XboxOneController extends AbstractXboxController {
 
             case 0x07:
                 if (buffer.remaining() < 4) {
-                    LimeLog.severe("XBone mode read too small: "+buffer.remaining());
+                    //LimeLog.severe("XBone mode read too small: "+buffer.remaining());
+                    Log.w(TAG, "XBone mode read too small: "+buffer.remaining());
                     return false;
                 }
 
@@ -173,7 +177,8 @@ public class XboxOneController extends AbstractXboxController {
             // Send the initialization packet
             int res = connection.bulkTransfer(outEndpt, data, data.length, 3000);
             if (res != data.length) {
-                LimeLog.warning("Initialization transfer failed: "+res);
+                //LimeLog.warning("Initialization transfer failed: "+res);
+                Log.w(TAG, "Initialization transfer failed: "+res);
                 return false;
             }
         }
@@ -193,7 +198,8 @@ public class XboxOneController extends AbstractXboxController {
         };
         int res = connection.bulkTransfer(outEndpt, data, data.length, 100);
         if (res != data.length) {
-            LimeLog.warning("Rumble transfer failed: "+res);
+            //LimeLog.warning("Rumble transfer failed: "+res);
+            Log.w(TAG, "Rumble transfer failed: "+res);
         }
     }
 

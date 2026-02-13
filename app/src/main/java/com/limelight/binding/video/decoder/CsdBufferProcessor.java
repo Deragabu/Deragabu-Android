@@ -1,6 +1,8 @@
 package com.limelight.binding.video.decoder;
 
 
+import android.util.Log;
+
 import com.limelight.binding.video.MediaCodecHelper;
 
 import java.nio.ByteBuffer;
@@ -35,7 +37,8 @@ public class CsdBufferProcessor {
         boolean constrainedHighProfile = MediaCodecHelper.decoderNeedsConstrainedHighProfile(decoderName);
 
         if (constrainedHighProfile) {
-            LimeLog.info("Decoder " + decoderName + " needs constrained high profile");
+            //LimeLog.info("Decoder " + decoderName + " needs constrained high profile");
+            Log.i("CsdBufferProcessor", "Decoder " + decoderName + " needs constrained high profile");
         }
     }
 

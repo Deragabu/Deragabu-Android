@@ -2,6 +2,7 @@ package com.limelight.grid;
 
 import android.content.Context;
 import android.graphics.BitmapFactory;
+import android.util.Log;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.ProgressBar;
@@ -23,8 +24,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-@SuppressWarnings("unchecked")
 public class AppGridAdapter extends GenericGridAdapter<AppView.AppObject> {
+    private static final String TAG = "AppGridAdapter";
     private static final int ART_WIDTH_PX = 300;
     private static final int SMALL_WIDTH_DP = 100;
     private static final int LARGE_WIDTH_DP = 150;
@@ -34,8 +35,8 @@ public class AppGridAdapter extends GenericGridAdapter<AppView.AppObject> {
     private final boolean showHiddenApps;
 
     private CachedAppAssetLoader loader;
-    private Set<Integer> hiddenAppIds = new HashSet<>();
-    private ArrayList<AppView.AppObject> allApps = new ArrayList<>();
+    private final Set<Integer> hiddenAppIds = new HashSet<>();
+    private final ArrayList<AppView.AppObject> allApps = new ArrayList<>();
 
     public AppGridAdapter(Context context, PreferenceConfiguration prefs, ComputerDetails computer, String uniqueId, boolean showHiddenApps) {
         super(context, getLayoutIdForPreferences(prefs));
@@ -97,7 +98,7 @@ public class AppGridAdapter extends GenericGridAdapter<AppView.AppObject> {
             // We don't want to make them bigger before draw-time
             scalingDivisor = 1.0;
         }
-        LimeLog.info("Art scaling divisor: " + scalingDivisor);
+        Log.i(TAG,"Art scaling divisor: " + scalingDivisor);
 
         if (loader != null) {
             // Cancel operations on the old loader
@@ -121,12 +122,7 @@ public class AppGridAdapter extends GenericGridAdapter<AppView.AppObject> {
     }
 
     private static void sortList(List<AppView.AppObject> list) {
-        Collections.sort(list, new Comparator<AppView.AppObject>() {
-            @Override
-            public int compare(AppView.AppObject lhs, AppView.AppObject rhs) {
-                return lhs.app.getAppName().toLowerCase().compareTo(rhs.app.getAppName().toLowerCase());
-            }
-        });
+        list.sort(Comparator.comparing(lhs -> lhs.app.getAppName().toLowerCase()));
     }
 
     public void addApp(AppView.AppObject app) {

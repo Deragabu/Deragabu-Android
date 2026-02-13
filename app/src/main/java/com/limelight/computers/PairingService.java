@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Binder;
 import android.os.IBinder;
+import android.util.Log;
 
 import com.limelight.PcView;
 import com.limelight.R;
@@ -24,6 +25,7 @@ import java.net.UnknownHostException;
 import java.security.cert.X509Certificate;
 
 public class PairingService extends Service {
+    private static final String TAG = "PairingService";
     private static final String CHANNEL_ID = "pairing_channel";
     private static final int NOTIFICATION_ID = 2001;
 
@@ -50,6 +52,7 @@ public class PairingService extends Service {
 
     public interface PairingListener {
         void onPairingSuccess(String computerUuid, X509Certificate serverCert);
+
         void onPairingFailed(String computerUuid, String message);
     }
 
@@ -139,8 +142,8 @@ public class PairingService extends Service {
         // Start pairing in background using Sunshine API
         cancelled = false;
         pairingThread = new Thread(() ->
-            doSunshinePairing(computerUuid, computerName, computerAddress, httpPort, httpsPort,
-                              serverCertBytes, uniqueId, currentPin, sunshineUsername, sunshinePassword, deviceName));
+                doSunshinePairing(computerUuid, computerName, computerAddress, httpPort, httpsPort,
+                        serverCertBytes, uniqueId, currentPin, sunshineUsername, sunshinePassword, deviceName));
         pairingThread.start();
 
         return START_STICKY;
@@ -245,12 +248,15 @@ public class PairingService extends Service {
                     try {
                         // Wait a bit for pm.pair() to start and send the initial pairing request
                         Thread.sleep(500);
-                        LimeLog.info("Submitting PIN to Sunshine API...");
+                        //LimeLog.info("Submitting PIN to Sunshine API...");
+                        Log.i(TAG, "Submitting PIN to Sunshine API...");
                         boolean pinSubmitted = sendPinToSunshine(finalComputerAddress, username, password, pin, deviceName);
                         if (pinSubmitted) {
-                            LimeLog.info("PIN submitted successfully");
+                            //LimeLog.info("PIN submitted successfully");
+                            Log.i(TAG, "PIN submitted successfully");
                         } else {
-                            LimeLog.warning("Failed to submit PIN to Sunshine API");
+                            //LimeLog.warning("Failed to submit PIN to Sunshine API");
+                            Log.e(TAG, "Failed to submit PIN to Sunshine API");
                         }
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
@@ -276,7 +282,8 @@ public class PairingService extends Service {
         } catch (FileNotFoundException e) {
             message = getString(R.string.error_404);
         } catch (Exception e) {
-            LimeLog.warning("Sunshine pairing failed: " + e.getMessage());
+            //LimeLog.warning("Sunshine pairing failed: " + e.getMessage());
+            Log.e(TAG, "Sunshine pairing failed: " + e.getMessage(), e);
             message = e.getMessage();
         }
 
@@ -305,6 +312,7 @@ public class PairingService extends Service {
 
     /**
      * Send PIN to Sunshine server via its REST API
+     *
      * @return true if PIN was accepted
      */
     private boolean sendPinToSunshine(String computerAddress, String username, String password,
@@ -318,7 +326,8 @@ public class PairingService extends Service {
             }
             String url = "https://" + host + ":47990/api/pin";
 
-            LimeLog.info("Sending PIN to Sunshine API: " + url);
+            //LimeLog.info("Sending PIN to Sunshine API: " + url);
+            Log.i(TAG, "Sending PIN to Sunshine API: " + url);
 
             // Create JSON payload
             org.json.JSONObject jsonPayload = new org.json.JSONObject();
@@ -332,15 +341,19 @@ public class PairingService extends Service {
 
             // Create trust manager that accepts all certificates (for self-signed Sunshine certs)
             @SuppressLint("CustomX509TrustManager") javax.net.ssl.TrustManager[] trustAllCerts = new javax.net.ssl.TrustManager[]{
-                new javax.net.ssl.X509TrustManager() {
-                    public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-                        return new java.security.cert.X509Certificate[0];
+                    new javax.net.ssl.X509TrustManager() {
+                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                            return new java.security.cert.X509Certificate[0];
+                        }
+
+                        @SuppressLint("TrustAllX509TrustManager")
+                        public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {
+                        }
+
+                        @SuppressLint("TrustAllX509TrustManager")
+                        public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {
+                        }
                     }
-                    @SuppressLint("TrustAllX509TrustManager")
-                    public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
-                    @SuppressLint("TrustAllX509TrustManager")
-                    public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {}
-                }
             };
 
             // Create SSL context with trust-all manager
@@ -372,13 +385,14 @@ public class PairingService extends Service {
             }
 
             int responseCode = connection.getResponseCode();
-            LimeLog.info("Sunshine API response code: " + responseCode);
-
+            //LimeLog.info("Sunshine API response code: " + responseCode);
+            Log.i(TAG, "Sunshine API response code: " + responseCode);
             // 200 OK means PIN was accepted
             if (responseCode == 200) {
                 return true;
             } else if (responseCode == 401) {
-                LimeLog.warning("Sunshine API authentication failed (401)");
+                //LimeLog.warning("Sunshine API authentication failed (401)");
+                Log.w(TAG, "Sunshine API authentication failed (401)");
                 return false;
             } else {
                 // Try to read error message
@@ -391,21 +405,25 @@ public class PairingService extends Service {
                         while ((line = br.readLine()) != null) {
                             response.append(line);
                         }
-                        LimeLog.warning("Sunshine API error response: " + response);
+                        //LimeLog.warning("Sunshine API error response: " + response);
+                        Log.w(TAG, "Sunshine API error response: " + response);
                     }
                 }
                 return false;
             }
         } catch (javax.net.ssl.SSLHandshakeException e) {
-            LimeLog.warning("SSL Handshake failed: " + e.getMessage());
-            LimeLog.warning("Stack trace: " + android.util.Log.getStackTraceString(e));
+            /*LimeLog.warning("SSL Handshake failed: " + e.getMessage());
+            LimeLog.warning("Stack trace: " + android.util.Log.getStackTraceString(e));*/
+            Log.e(TAG, "SSL Handshake failed: " + e.getMessage(), e);
             return false;
         } catch (java.net.SocketTimeoutException e) {
-            LimeLog.warning("Connection timeout: " + e.getMessage());
+            //LimeLog.warning("Connection timeout: " + e.getMessage());
+            Log.w(TAG, "Connection timeout: " + e.getMessage(), e);
             return false;
         } catch (Exception e) {
-            LimeLog.warning("Failed to send PIN to Sunshine: " + e.getMessage());
-            LimeLog.warning("Stack trace: " + android.util.Log.getStackTraceString(e));
+            /*imeLog.warning("Failed to send PIN to Sunshine: " + e.getMessage());
+            LimeLog.warning("Stack trace: " + android.util.Log.getStackTraceString(e));*/
+            Log.e(TAG, "Failed to send PIN to Sunshine: " + e.getMessage(), e);
             return false;
         } finally {
             if (connection != null) {
