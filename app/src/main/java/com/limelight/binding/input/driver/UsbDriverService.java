@@ -11,9 +11,9 @@ import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbManager;
 import android.os.Binder;
-import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Log;
 import android.view.InputDevice;
 import android.widget.Toast;
@@ -79,7 +79,7 @@ public class UsbDriverService extends Service implements UsbDriverListener {
             // Initial attachment broadcast
             assert action != null;
             if (action.equals(UsbManager.ACTION_USB_DEVICE_ATTACHED)) {
-                final UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                final UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class);
 
                 // shouldClaimDevice() looks at the kernel's enumerated input
                 // devices to make its decision about whether to prompt to take
@@ -88,7 +88,7 @@ public class UsbDriverService extends Service implements UsbDriverListener {
                 // kernel is capable of running the device. Let's post a delayed
                 // message to process this state change to allow the kernel
                 // some time to bring up the stack.
-                new Handler().postDelayed(() -> {
+                new Handler(Looper.getMainLooper()).postDelayed(() -> {
                     // Continue the state machine
                     assert device != null;
                     handleUsbDeviceState(device);
@@ -96,7 +96,7 @@ public class UsbDriverService extends Service implements UsbDriverListener {
             }
             // Subsequent permission dialog completion intent
             else if (action.equals(ACTION_USB_PERMISSION)) {
-                UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
+                UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice.class);
 
                 // Permission dialog is now closed
                 if (stateListener != null) {
@@ -104,7 +104,7 @@ public class UsbDriverService extends Service implements UsbDriverListener {
                 }
 
                 // If we got this far, we've already found we're able to handle this device
-                if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
+                if (device != null && intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
                     handleUsbDeviceState(device);
                 }
             }
