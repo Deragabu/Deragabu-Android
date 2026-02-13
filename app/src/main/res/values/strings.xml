@@ -314,10 +314,11 @@
     <string name="summary_checkbox_enable_mdns">Automatically discover host PCs on your local network</string>
 
     <!-- Encryption Settings -->
-    <string name="title_checkbox_force_disable_encryption">Force disable encryption</string>
-    <string name="summary_checkbox_force_disable_encryption">Always disable stream encryption (DANGEROUS - only use on trusted networks)</string>
-    <string name="title_checkbox_disable_encryption_vpn">Disable encryption on VPN</string>
-    <string name="summary_checkbox_disable_encryption_vpn">Disable stream encryption when connected via VPN (VPN provides its own encryption)</string>
+    <string name="title_encryption_mode">Stream encryption</string>
+    <string name="summary_encryption_mode">Control when stream encryption is used</string>
+    <string name="encryption_mode_enabled">Always enabled (default)</string>
+    <string name="encryption_mode_disabled_vpn">Disable on VPN</string>
+    <string name="encryption_mode_disabled_always">Always disabled (dangerous)</string>
 
     <!-- Encryption Warning Dialog -->
     <string name="encryption_warning_title">⚠️ Security Warning</string>

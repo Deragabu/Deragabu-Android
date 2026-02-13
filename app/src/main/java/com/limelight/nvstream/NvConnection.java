@@ -495,11 +495,17 @@ public class NvConnection {
             synchronized (MoonBridge.class) {
                 MoonBridge.setupBridge(videoDecoderRenderer, audioRenderer, connectionListener);
 
-                // Determine if encryption should be disabled:
-                // 1. Force disable: always disable encryption regardless of network type
-                // 2. VPN disable: only disable when connected via VPN
-                boolean disableEncryption = context.streamConfig.getForceDisableEncryption() ||
-                        (context.streamConfig.getDisableEncryptionOnVpn() && isVpnConnected());
+                // Determine if encryption should be disabled based on encryption mode:
+                // - "enabled": always use encryption (default)
+                // - "disabled_vpn": disable encryption only when connected via VPN
+                // - "disabled_always": always disable encryption (dangerous)
+                String encryptionMode = context.streamConfig.getEncryptionMode();
+                boolean disableEncryption = false;
+                if ("disabled_always".equals(encryptionMode)) {
+                    disableEncryption = true;
+                } else if ("disabled_vpn".equals(encryptionMode)) {
+                    disableEncryption = isVpnConnected();
+                }
 
                 int ret = MoonBridge.startConnection(context.serverAddress.address,
                         context.serverAppVersion, context.serverGfeVersion, context.rtspSessionUrl,

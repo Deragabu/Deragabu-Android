@@ -27,8 +27,7 @@ public class StreamConfiguration {
     private int colorRange;
     private int colorSpace;
     private boolean persistGamepadsAfterDisconnect;
-    private boolean forceDisableEncryption;
-    private boolean disableEncryptionOnVpn;
+    private String encryptionMode;
 
     public static class Builder {
         private StreamConfiguration config = new StreamConfiguration();
@@ -129,13 +128,8 @@ public class StreamConfiguration {
             return this;
         }
 
-        public StreamConfiguration.Builder setForceDisableEncryption(boolean disable) {
-            config.forceDisableEncryption = disable;
-            return this;
-        }
-
-        public StreamConfiguration.Builder setDisableEncryptionOnVpn(boolean disable) {
-            config.disableEncryptionOnVpn = disable;
+        public StreamConfiguration.Builder setEncryptionMode(String mode) {
+            config.encryptionMode = mode;
             return this;
         }
 
@@ -164,8 +158,7 @@ public class StreamConfiguration {
         this.colorRange = 0;
         this.colorSpace = 0;
         this.persistGamepadsAfterDisconnect = false;
-        this.forceDisableEncryption = false;
-        this.disableEncryptionOnVpn = false;
+        this.encryptionMode = "enabled";
     }
     
     public int getWidth() {
@@ -240,11 +233,7 @@ public class StreamConfiguration {
         return colorSpace;
     }
 
-    public boolean getForceDisableEncryption() {
-        return forceDisableEncryption;
-    }
-
-    public boolean getDisableEncryptionOnVpn() {
-        return disableEncryptionOnVpn;
+    public String getEncryptionMode() {
+        return encryptionMode;
     }
 }

@@ -567,8 +567,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 .setColorSpace(decoderRenderer.getPreferredColorSpace())
                 .setColorRange(decoderRenderer.getPreferredColorRange())
                 .setPersistGamepadsAfterDisconnect(!prefConfig.multiController)
-                .setForceDisableEncryption(prefConfig.forceDisableEncryption)
-                .setDisableEncryptionOnVpn(prefConfig.disableEncryptionOnVpn)
+                .setEncryptionMode(prefConfig.encryptionMode)
                 .build();
 
         // Initialize the connection

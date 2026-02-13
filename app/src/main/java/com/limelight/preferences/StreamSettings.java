@@ -617,23 +617,24 @@ public class StreamSettings extends AppCompatActivity {
                 });
             }
 
-            // Add security warning for force disable encryption option
-            CheckBoxPreference forceDisableEncryptionPref = findPreference("checkbox_force_disable_encryption");
-            if (forceDisableEncryptionPref != null) {
-                forceDisableEncryptionPref.setOnPreferenceChangeListener((preference, newValue) -> {
-                    if ((Boolean) newValue) {
-                        // User is enabling force disable encryption, show security warning
+            // Add security warning for encryption mode changes
+            ListPreference encryptionModePref = findPreference("list_encryption_mode");
+            if (encryptionModePref != null) {
+                encryptionModePref.setOnPreferenceChangeListener((preference, newValue) -> {
+                    String selectedMode = (String) newValue;
+                    // Show warning if user selects any mode that disables encryption
+                    if ("disabled_always".equals(selectedMode) || "disabled_vpn".equals(selectedMode)) {
                         Activity activity = getActivity();
                         if (activity != null) {
                             new android.app.AlertDialog.Builder(activity)
                                     .setTitle(R.string.encryption_warning_title)
                                     .setMessage(R.string.encryption_warning_message)
                                     .setPositiveButton(R.string.encryption_warning_confirm, (dialog, which) -> {
-                                        // User confirmed, enable the option
-                                        forceDisableEncryptionPref.setChecked(true);
+                                        // User confirmed, apply the change
+                                        encryptionModePref.setValue(selectedMode);
                                     })
                                     .setNegativeButton(R.string.encryption_warning_cancel, (dialog, which) -> {
-                                        // User cancelled, keep the option disabled
+                                        // User cancelled, keep the current setting
                                         dialog.dismiss();
                                     })
                                     .setCancelable(false)

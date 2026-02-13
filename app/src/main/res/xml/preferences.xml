@@ -232,16 +232,13 @@
             android:title="@string/title_checkbox_enable_mdns"
             android:summary="@string/summary_checkbox_enable_mdns"
             android:defaultValue="false"/>
-        <CheckBoxPreference
-            android:key="checkbox_force_disable_encryption"
-            android:title="@string/title_checkbox_force_disable_encryption"
-            android:summary="@string/summary_checkbox_force_disable_encryption"
-            android:defaultValue="false"/>
-        <CheckBoxPreference
-            android:key="checkbox_disable_encryption_vpn"
-            android:title="@string/title_checkbox_disable_encryption_vpn"
-            android:summary="@string/summary_checkbox_disable_encryption_vpn"
-            android:defaultValue="false"/>
+        <ListPreference
+            android:key="list_encryption_mode"
+            android:title="@string/title_encryption_mode"
+            android:summary="@string/summary_encryption_mode"
+            android:entries="@array/encryption_mode_names"
+            android:entryValues="@array/encryption_mode_values"
+            android:defaultValue="enabled"/>
     </PreferenceCategory>
     <!--PreferenceCategory android:title="@string/category_help"
         android:key="category_help">

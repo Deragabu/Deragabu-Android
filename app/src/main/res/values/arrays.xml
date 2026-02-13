@@ -81,4 +81,15 @@
         <item>right</item>
         <item>left</item>
     </string-array>
+
+    <string-array name="encryption_mode_names">
+        <item>@string/encryption_mode_enabled</item>
+        <item>@string/encryption_mode_disabled_vpn</item>
+        <item>@string/encryption_mode_disabled_always</item>
+    </string-array>
+    <string-array name="encryption_mode_values" translatable="false">
+        <item>enabled</item>
+        <item>disabled_vpn</item>
+        <item>disabled_always</item>
+    </string-array>
 </resources>
