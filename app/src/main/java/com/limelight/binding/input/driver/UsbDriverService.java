@@ -260,24 +260,16 @@ public class UsbDriverService extends Service implements UsbDriverListener {
 
         // Enumerate existing devices
         for (UsbDevice dev : usbManager.getDeviceList().values()) {
-           /* LimeLog.info("Found USB device: " + dev.getDeviceName() +
-                    " VID: 0x" + Integer.toHexString(dev.getVendorId()) +
-                    " PID: 0x" + Integer.toHexString(dev.getProductId()) +
-                    " Interfaces: " + dev.getInterfaceCount());*/
                 Log.i(TAG, "Found USB device: " + dev.getDeviceName() +
                         " VID: 0x" + Integer.toHexString(dev.getVendorId()) +
                         " PID: 0x" + Integer.toHexString(dev.getProductId()) +
                         " Interfaces: " + dev.getInterfaceCount());
             if (dev.getInterfaceCount() > 0) {
-                /*LimeLog.info("  Interface 0 - Class: " + dev.getInterface(0).getInterfaceClass() +
-                        " Subclass: " + dev.getInterface(0).getInterfaceSubclass() +
-                        " Protocol: " + dev.getInterface(0).getInterfaceProtocol());*/
                 Log.i(TAG, "  Interface 0 - Class: " + dev.getInterface(0).getInterfaceClass() +
                         " Subclass: " + dev.getInterface(0).getInterfaceSubclass() +
                         " Protocol: " + dev.getInterface(0).getInterfaceProtocol());
             }
             boolean shouldClaim = shouldClaimDevice(dev, prefConfig.bindAllUsb);
-            //LimeLog.info("  shouldClaimDevice: " + shouldClaim + " (bindAllUsb: " + prefConfig.bindAllUsb + ")");
             Log.i(TAG, "  shouldClaimDevice: " + shouldClaim + " (bindAllUsb: " + prefConfig.bindAllUsb + ")");
             if (shouldClaim) {
                 // Start the process of claiming this device
