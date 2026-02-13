@@ -2,7 +2,7 @@
 name = "moonlight-core-rs"
 version = "0.1.0"
 edition = "2021"
-authors = ["Moonlight Team"]
+authors = ["qwe7002"]
 description = "Moonlight streaming client core library for Android"
 license = "GPL-3.0"
 links = "moonlight-common-c"
