@@ -74,7 +74,6 @@ public class UsbDriverService extends Service implements UsbDriverListener {
         @Override
         public void onReceive(Context context, Intent intent) {
             String action = intent.getAction();
-            // FIXME: We should probably be checking the device in the permission result case as well, but in practice we only get one permission dialog at a time so this is sufficient for now.
 
             // Initial attachment broadcast
             assert action != null;
