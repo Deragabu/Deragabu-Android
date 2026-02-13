@@ -19,6 +19,34 @@ public class VulkanHelper {
     private static final String TAG = "VulkanHelper";
 
     /**
+     * Get the Vulkan API version supported by the device.
+     * Returns version in format 0xAABBCCCC where AA=major, BB=minor, CCCC=patch
+     *
+     * @return Vulkan API version, or 0 if Vulkan is not available
+     */
+    public static int getVulkanApiVersion() {
+        try {
+            // Try to get Vulkan version from system property
+            String vulkanVersion = getSystemProperty("ro.hardware.vulkan.version");
+            if (vulkanVersion != null && !vulkanVersion.isEmpty()) {
+                try {
+                    return Integer.parseInt(vulkanVersion);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+
+            // Android 14+ (SDK 34+) devices are required to support Vulkan 1.3
+            Log.i(TAG, "Assuming Vulkan 1.3 based on Android 14+");
+            return 0x00403000;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to get Vulkan API version: " + e.getMessage(), e);
+        }
+
+        return 0;
+    }
+
+
+    /**
      * Get the GPU renderer name using Vulkan.
      * This reads from system properties as a fallback and uses dumpsys if available.
      *

@@ -7,9 +7,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import android.annotation.SuppressLint;
-import android.app.ActivityManager;
 import android.content.Context;
-import android.content.pm.ConfigurationInfo;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
@@ -18,6 +16,8 @@ import android.media.MediaCodecInfo.CodecProfileLevel;
 import android.media.MediaFormat;
 import android.os.Build;
 import android.util.Log;
+
+import com.limelight.utils.VulkanHelper;
 
 @SuppressWarnings("RedundantSuppression")
 public class MediaCodecHelper {
@@ -45,7 +45,6 @@ public class MediaCodecHelper {
     public static final boolean SHOULD_BYPASS_SOFTWARE_BLOCK =
             Build.HARDWARE.equals("ranchu") || Build.HARDWARE.equals("cheets") || Build.BRAND.equals("Android-x86");
 
-    private static boolean isLowEndSnapdragon = false;
     private static boolean isAdreno620 = false;
     private static boolean initialized = false;
 
@@ -206,70 +205,58 @@ public class MediaCodecHelper {
     // only GLES 3.0 even though the GPU is an Adreno 4xx series part.
     // An example of such a device is the Huawei Honor 5x with the
     // Snapdragon 616 SoC (Adreno 405).
-    private static boolean isGLES31SnapdragonRenderer(String glRenderer) {
-        // Snapdragon 4xx and higher support GLES 3.1
-        return getAdrenoRendererModelNumber(glRenderer) >= 400;
+    private static boolean isModernSnapdragonRenderer(String gpuRenderer) {
+        // Snapdragon 4xx and higher are considered modern
+        return getAdrenoRendererModelNumber(gpuRenderer) >= 400;
     }
 
-    public static void initialize(Context context, String glRenderer) {
+    @SuppressWarnings("unused")
+    public static void initialize(Context context, String gpuRenderer) {
         if (initialized) {
             return;
         }
 
-        ActivityManager activityManager =
-                (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
-        ConfigurationInfo configInfo = activityManager.getDeviceConfigurationInfo();
-        if (configInfo.reqGlEsVersion != ConfigurationInfo.GL_ES_VERSION_UNDEFINED) {
-            // FIXME: Use Vulcan API version when we switch to Vulkan for GPU queries instead of relying on GLES version as a proxy for GPU generation. Some devices (like the Xiaomi Mi 10 lite 5G) report GLES 3.1 support but still have broken HEVC decoders, so this is not a perfect heuristic.
-            //LimeLog.info("OpenGL ES version: " + configInfo.reqGlEsVersion);
-            Log.i(TAG, "OpenGL ES version: " + configInfo.reqGlEsVersion);
+        // Use Vulkan API version for GPU capability detection
+        int vulkanVersion = VulkanHelper.getVulkanApiVersion();
+        Log.i(TAG, "Vulkan API version: 0x" + Integer.toHexString(vulkanVersion));
 
-            isLowEndSnapdragon = isLowEndSnapdragonRenderer(glRenderer);
-            isAdreno620 = getAdrenoRendererModelNumber(glRenderer) == 620;
+        // All Android 14+ devices support Vulkan, so we can enable modern GPU features
+        isAdreno620 = getAdrenoRendererModelNumber(gpuRenderer) == 620;
 
-            // Tegra K1 and later can do reference frame invalidation properly
-            if (configInfo.reqGlEsVersion >= 0x30000) {
-                //LimeLog.info("Added c2.nvidia to reference frame invalidation support list");
-                Log.i(TAG, "Added c2.nvidia to reference frame invalidation support list");
-                refFrameInvalidationAvcPrefixes.add("c2.nvidia"); // Unconfirmed
-                refFrameInvalidationHevcPrefixes.add("c2.nvidia"); // Unconfirmed
+        // Modern GPUs that support Vulkan should support RFI
+        Log.i(TAG, "Added c2.nvidia to reference frame invalidation support list");
+        refFrameInvalidationAvcPrefixes.add("c2.nvidia");
+        refFrameInvalidationHevcPrefixes.add("c2.nvidia");
 
-                //LimeLog.info("Added c2.qti to reference frame invalidation support list");
-                Log.i(TAG, "Added c2.qti to reference frame invalidation support list");
-                refFrameInvalidationAvcPrefixes.add("c2.qti");
-                refFrameInvalidationHevcPrefixes.add("c2.qti");
-            }
+        Log.i(TAG, "Added c2.qti to reference frame invalidation support list");
+        refFrameInvalidationAvcPrefixes.add("c2.qti");
+        refFrameInvalidationHevcPrefixes.add("c2.qti");
 
-            // Qualcomm's early HEVC decoders break hard on our HEVC stream. The best check to
-            // tell the good from the bad decoders are the generation of Adreno GPU included:
-            // 3xx - bad
-            // 4xx - good
-            //
-            // The "good" GPUs support GLES 3.1, but we can't just check that directly
-            // (see comment on isGLES31SnapdragonRenderer).
-            //
-            if (isGLES31SnapdragonRenderer(glRenderer)) {
-                //LimeLog.info("Added c2.qti to HEVC decoders based on GLES 3.1+ support");
-                Log.i(TAG, "Added c2.qti to HEVC decoders based on GLES 3.1+ support");
-                whitelistedHevcDecoders.add("c2.qti");
-            } else {
-                // These older decoders need 4 slices per frame for best performance
-                useFourSlicesPrefixes.add("c2.qti");
-            }
+        // Qualcomm's early HEVC decoders break hard on our HEVC stream. The best check to
+        // tell the good from the bad decoders are the generation of Adreno GPU included:
+        // 3xx - bad
+        // 4xx - good
+        //
+        // Modern GPUs (Adreno 4xx+) that support Vulkan have good HEVC support.
+        //
+        if (isModernSnapdragonRenderer(gpuRenderer)) {
+            Log.i(TAG, "Added c2.qti to HEVC decoders based on modern Adreno GPU (4xx+)");
+            whitelistedHevcDecoders.add("c2.qti");
+        } else {
+            // These older decoders need 4 slices per frame for best performance
+            useFourSlicesPrefixes.add("c2.qti");
+        }
 
-            // MediaTek SoCs with PowerVR GPUs have good HEVC support.
-            if (isPowerVR(glRenderer)) {
-                //LimeLog.info("Added c2.mtk to HEVC decoders based on PowerVR GPU");
-                Log.i(TAG, "Added c2.mtk to HEVC decoders based on PowerVR GPU");
-                whitelistedHevcDecoders.add("c2.mtk");
+        // MediaTek SoCs with PowerVR GPUs have good HEVC support.
+        if (isPowerVR(gpuRenderer)) {
+            Log.i(TAG, "Added c2.mtk to HEVC decoders based on PowerVR GPU");
+            whitelistedHevcDecoders.add("c2.mtk");
 
-                // RFI on HEVC causes decoder hangs on the newer GE8100, GE8300, and GE8320 GPUs,
-                // so we limit it to the Series6XT GPUs where we know it works.
-                if (glRenderer.contains("GX6")) {
-                    //LimeLog.info("Added c2.mtk to RFI list for HEVC");
-                    Log.i(TAG, "Added c2.mtk to RFI list for HEVC");
-                    refFrameInvalidationHevcPrefixes.add("c2.mtk");
-                }
+            // RFI on HEVC causes decoder hangs on the newer GE8100, GE8300, and GE8320 GPUs,
+            // so we limit it to the Series6XT GPUs where we know it works.
+            if (gpuRenderer.contains("GX6")) {
+                Log.i(TAG, "Added c2.mtk to RFI list for HEVC");
+                refFrameInvalidationHevcPrefixes.add("c2.mtk");
             }
         }
 
