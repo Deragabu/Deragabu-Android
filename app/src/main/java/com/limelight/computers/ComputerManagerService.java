@@ -721,7 +721,7 @@ public class ComputerManagerService extends Service {
      * Awaits termination of all polling threads with a timeout.
      * This prevents indefinite blocking when HttpURLConnection operations don't respond to interrupts.
      */
-    private void awaitPollingTermination(long timeoutMs) {
+    private void awaitPollingTermination(@SuppressWarnings("SameParameterValue") long timeoutMs) {
         long startTime = SystemClock.elapsedRealtime();
         boolean allTerminated;
 

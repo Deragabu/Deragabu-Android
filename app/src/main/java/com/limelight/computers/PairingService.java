@@ -238,43 +238,79 @@ public class PairingService extends Service {
                 success = true;
                 pairedCert = httpConn.getPairingManager().getPairedCert();
             } else {
-                PairingManager pm = httpConn.getPairingManager();
-
-                // Step 1: Start pm.pair() which sends the pairing request and blocks waiting for PIN
-                // We need to submit the PIN via /api/pin while pm.pair() is waiting
-                // Schedule PIN submission to run after a short delay (to ensure pm.pair() has started)
-                final String finalComputerAddress = computerAddress;
-                new Thread(() -> {
-                    try {
-                        // Wait a bit for pm.pair() to start and send the initial pairing request
-                        Thread.sleep(500);
-                        //LimeLog.info("Submitting PIN to Sunshine API...");
-                        Log.i(TAG, "Submitting PIN to Sunshine API...");
-                        boolean pinSubmitted = sendPinToSunshine(finalComputerAddress, username, password, pin, deviceName);
-                        if (pinSubmitted) {
-                            //LimeLog.info("PIN submitted successfully");
-                            Log.i(TAG, "PIN submitted successfully");
-                        } else {
-                            //LimeLog.warning("Failed to submit PIN to Sunshine API");
-                            Log.e(TAG, "Failed to submit PIN to Sunshine API");
-                        }
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    }
-                }).start();
-
-                // Step 2: This call blocks until server receives PIN and completes pairing
-                PairState pairState = pm.pair(httpConn.getServerInfo(true), pin);
-
-                if (pairState == PairState.PIN_WRONG) {
-                    message = getString(R.string.pair_incorrect_pin);
-                } else if (pairState == PairState.FAILED) {
+                // Step 1: Verify Sunshine credentials before starting pairing
+                Log.i(TAG, "Verifying Sunshine credentials...");
+                int verifyResult = verifySunshineCredentials(computerAddress, username, password);
+                if (verifyResult == 401) {
+                    Log.e(TAG, "Sunshine authentication failed - invalid credentials");
+                    message = getString(R.string.sunshine_pairing_auth_failed);
+                } else if (verifyResult != 200 && verifyResult != -2) {
+                    // -2 means endpoint not found (older Sunshine), proceed with pairing
+                    Log.e(TAG, "Failed to verify Sunshine credentials, response code: " + verifyResult);
                     message = getString(R.string.pair_fail);
-                } else if (pairState == PairState.ALREADY_IN_PROGRESS) {
-                    message = getString(R.string.pair_already_in_progress);
-                } else if (pairState == PairState.PAIRED) {
-                    success = true;
-                    pairedCert = pm.getPairedCert();
+                } else {
+                    // Credentials verified or verification not supported, proceed with pairing
+                    PairingManager pm = httpConn.getPairingManager();
+
+                    // Use AtomicBoolean to capture PIN submission result from background thread
+                    final java.util.concurrent.atomic.AtomicBoolean pinSubmitSuccess = new java.util.concurrent.atomic.AtomicBoolean(false);
+                    final java.util.concurrent.atomic.AtomicBoolean pinSubmitAuthFailed = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+                    // Schedule PIN submission to run after a short delay (to ensure pm.pair() has started)
+                    final String finalComputerAddress = computerAddress;
+                    final Thread currentPairingThread = pairingThread;
+                    Thread pinThread = new Thread(() -> {
+                        try {
+                            // Wait a bit for pm.pair() to start and send the initial pairing request
+                            Thread.sleep(500);
+                            Log.i(TAG, "Submitting PIN to Sunshine API...");
+                            int result = sendPinToSunshine(finalComputerAddress, username, password, pin, deviceName);
+                            if (result == 200) {
+                                Log.i(TAG, "PIN submitted successfully");
+                                pinSubmitSuccess.set(true);
+                            } else if (result == 401) {
+                                Log.e(TAG, "Authentication failed (401) - invalid credentials");
+                                pinSubmitAuthFailed.set(true);
+                                // Interrupt the pairing thread to stop waiting
+                                if (currentPairingThread != null) {
+                                    currentPairingThread.interrupt();
+                                }
+                            } else {
+                                Log.e(TAG, "Failed to submit PIN to Sunshine API, response code: " + result);
+                            }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    });
+                    pinThread.start();
+
+                    // Step 2: This call blocks until server receives PIN and completes pairing
+                    try {
+                        PairState pairState = pm.pair(pin);
+
+                        if (pairState == PairState.PIN_WRONG) {
+                            message = getString(R.string.pair_incorrect_pin);
+                        } else if (pairState == PairState.FAILED) {
+                            // Check if it was due to authentication failure
+                            if (pinSubmitAuthFailed.get()) {
+                                message = getString(R.string.sunshine_pairing_auth_failed);
+                            } else {
+                                message = getString(R.string.pair_fail);
+                            }
+                        } else if (pairState == PairState.ALREADY_IN_PROGRESS) {
+                            message = getString(R.string.pair_already_in_progress);
+                        } else if (pairState == PairState.PAIRED) {
+                            success = true;
+                            pairedCert = pm.getPairedCert();
+                        }
+                    } catch (Exception e) {
+                        // Check if interrupted due to auth failure
+                        if (pinSubmitAuthFailed.get()) {
+                            message = getString(R.string.sunshine_pairing_auth_failed);
+                        } else if (!cancelled) {
+                            throw e;
+                        }
+                    }
                 }
             }
         } catch (UnknownHostException e) {
@@ -311,11 +347,98 @@ public class PairingService extends Service {
     }
 
     /**
+     * Verify Sunshine credentials by calling a simple API endpoint
+     *
+     * @return HTTP response code (200 = success, 401 = auth failed, -2 = endpoint not found, -1 = error)
+     */
+    @SuppressLint("CustomX509TrustManager")
+    private int verifySunshineCredentials(String computerAddress, String username, String password) {
+        javax.net.ssl.HttpsURLConnection connection = null;
+        try {
+            // Build URL for Sunshine API - use /api/apps as a simple endpoint to verify auth
+            String host = computerAddress;
+            if (host.contains(":") && !host.startsWith("[")) {
+                host = "[" + host + "]";
+            }
+            String url = "https://" + host + ":47990/api/apps";
+
+            Log.i(TAG, "Verifying Sunshine credentials: " + url);
+
+            // Create Basic Auth header
+            String credentials = username + ":" + password;
+            String basicAuth = "Basic " + android.util.Base64.encodeToString(
+                    credentials.getBytes(java.nio.charset.StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
+
+            // Create trust manager that accepts all certificates (for self-signed Sunshine certs)
+            javax.net.ssl.TrustManager[] trustAllCerts = new javax.net.ssl.TrustManager[]{
+                    new javax.net.ssl.X509TrustManager() {
+                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                            return new java.security.cert.X509Certificate[0];
+                        }
+
+                        @SuppressLint("TrustAllX509TrustManager")
+                        public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {
+                        }
+
+                        @SuppressLint("TrustAllX509TrustManager")
+                        public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {
+                        }
+                    }
+            };
+
+            // Create SSL context with trust-all manager
+            javax.net.ssl.SSLContext sslContext = javax.net.ssl.SSLContext.getInstance("TLS");
+            sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
+            javax.net.ssl.SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
+            javax.net.ssl.HostnameVerifier trustAllHostnames = (hostname, session) -> true;
+
+            java.net.URL apiUrl = new java.net.URL(url);
+            connection = (javax.net.ssl.HttpsURLConnection) apiUrl.openConnection();
+
+            connection.setSSLSocketFactory(sslSocketFactory);
+            connection.setHostnameVerifier(trustAllHostnames);
+
+            connection.setRequestMethod("GET");
+            connection.setRequestProperty("Authorization", basicAuth);
+            connection.setRequestProperty("Accept", "*/*");
+            connection.setConnectTimeout(10000);
+            connection.setReadTimeout(10000);
+
+            int responseCode = connection.getResponseCode();
+            Log.i(TAG, "Sunshine credentials verification response code: " + responseCode);
+
+            if (responseCode == 200) {
+                return 200;
+            } else if (responseCode == 401) {
+                Log.w(TAG, "Sunshine authentication failed (401)");
+                return 401;
+            } else if (responseCode == 404) {
+                // Endpoint not found - older Sunshine version, proceed with pairing
+                Log.i(TAG, "API endpoint not found, proceeding with pairing");
+                return -2;
+            } else {
+                return responseCode;
+            }
+        } catch (java.io.FileNotFoundException e) {
+            // 404 - endpoint not found
+            Log.i(TAG, "API endpoint not found (FileNotFoundException), proceeding with pairing");
+            return -2;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to verify Sunshine credentials: " + e.getMessage(), e);
+            return -1;
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    /**
      * Send PIN to Sunshine server via its REST API
      *
-     * @return true if PIN was accepted
+     * @return HTTP response code (200 = success, 401 = auth failed, -1 = error)
      */
-    private boolean sendPinToSunshine(String computerAddress, String username, String password,
+    private int sendPinToSunshine(String computerAddress, String username, String password,
                                       String pin, String deviceName) {
         javax.net.ssl.HttpsURLConnection connection = null;
         try {
@@ -389,11 +512,11 @@ public class PairingService extends Service {
             Log.i(TAG, "Sunshine API response code: " + responseCode);
             // 200 OK means PIN was accepted
             if (responseCode == 200) {
-                return true;
+                return 200;
             } else if (responseCode == 401) {
                 //LimeLog.warning("Sunshine API authentication failed (401)");
                 Log.w(TAG, "Sunshine API authentication failed (401)");
-                return false;
+                return 401;
             } else {
                 // Try to read error message
                 java.io.InputStream errorStream = connection.getErrorStream();
@@ -409,22 +532,22 @@ public class PairingService extends Service {
                         Log.w(TAG, "Sunshine API error response: " + response);
                     }
                 }
-                return false;
+                return responseCode;
             }
         } catch (javax.net.ssl.SSLHandshakeException e) {
             /*LimeLog.warning("SSL Handshake failed: " + e.getMessage());
             LimeLog.warning("Stack trace: " + android.util.Log.getStackTraceString(e));*/
             Log.e(TAG, "SSL Handshake failed: " + e.getMessage(), e);
-            return false;
+            return -1;
         } catch (java.net.SocketTimeoutException e) {
             //LimeLog.warning("Connection timeout: " + e.getMessage());
             Log.w(TAG, "Connection timeout: " + e.getMessage(), e);
-            return false;
+            return -1;
         } catch (Exception e) {
             /*imeLog.warning("Failed to send PIN to Sunshine: " + e.getMessage());
             LimeLog.warning("Stack trace: " + android.util.Log.getStackTraceString(e));*/
             Log.e(TAG, "Failed to send PIN to Sunshine: " + e.getMessage(), e);
-            return false;
+            return -1;
         } finally {
             if (connection != null) {
                 connection.disconnect();

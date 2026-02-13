@@ -2,10 +2,6 @@ package com.limelight.nvstream.http;
 
 import android.util.Log;
 
-import org.bouncycastle.crypto.BlockCipher;
-import org.bouncycastle.crypto.engines.AESLightEngine;
-import org.bouncycastle.crypto.params.KeyParameter;
-
 import org.xmlpull.v1.XmlPullParserException;
 
 import java.nio.charset.StandardCharsets;
@@ -16,8 +12,13 @@ import java.security.cert.*;
 import java.util.Arrays;
 import java.util.Locale;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.SecretKeySpec;
+
 public class PairingManager {
     private static final String TAG = "PairingManager";
+
+    private static final int SHA256_HASH_LENGTH = 32;
 
     private final NvHTTP http;
 
@@ -42,14 +43,14 @@ public class PairingManager {
         this.pk = cryptoProvider.getClientPrivateKey();
     }
 
-    final private static char[] hexArray = "0123456789ABCDEF".toCharArray();
+    private static final char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
 
     private static String bytesToHex(byte[] bytes) {
         char[] hexChars = new char[bytes.length * 2];
         for (int j = 0; j < bytes.length; j++) {
             int v = bytes[j] & 0xFF;
-            hexChars[j * 2] = hexArray[v >>> 4];
-            hexChars[j * 2 + 1] = hexArray[v & 0x0F];
+            hexChars[j * 2] = HEX_ARRAY[v >>> 4];
+            hexChars[j * 2 + 1] = HEX_ARRAY[v & 0x0F];
         }
         return new String(hexChars);
     }
@@ -112,12 +113,11 @@ public class PairingManager {
 
     private static boolean verifySignature(byte[] data, byte[] signature, Certificate cert) {
         try {
-            Signature sig = PairingManager.getSha256SignatureInstanceForKey(cert.getPublicKey());
+            Signature sig = getSha256SignatureInstanceForKey(cert.getPublicKey());
             sig.initVerify(cert.getPublicKey());
             sig.update(data);
             return sig.verify(signature);
         } catch (NoSuchAlgorithmException | SignatureException | InvalidKeyException e) {
-
             Log.e(TAG, "verifySignature: " + e.getMessage(), e);
             throw new RuntimeException(e);
         }
@@ -125,7 +125,7 @@ public class PairingManager {
 
     private static byte[] signData(byte[] data, PrivateKey key) {
         try {
-            Signature sig = PairingManager.getSha256SignatureInstanceForKey(key);
+            Signature sig = getSha256SignatureInstanceForKey(key);
             sig.initSign(key);
             sig.update(data);
             return sig.sign();
@@ -135,34 +135,61 @@ public class PairingManager {
         }
     }
 
-    private static byte[] performBlockCipher(BlockCipher blockCipher, byte[] input) {
-        int blockSize = blockCipher.getBlockSize();
-        int blockRoundedSize = (input.length + (blockSize - 1)) & -blockSize;
-
-        byte[] blockRoundedInputData = Arrays.copyOf(input, blockRoundedSize);
-        byte[] blockRoundedOutputData = new byte[blockRoundedSize];
-
-        for (int offset = 0; offset < blockRoundedSize; offset += blockSize) {
-            blockCipher.processBlock(blockRoundedInputData, offset, blockRoundedOutputData, offset);
+    /**
+     * Compute SHA-256 hash of data
+     */
+    private static byte[] sha256Hash(byte[] data) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            return md.digest(data);
+        } catch (NoSuchAlgorithmException e) {
+            Log.e(TAG, "SHA-256 not available: " + e.getMessage(), e);
+            throw new RuntimeException(e);
         }
-
-        return blockRoundedOutputData;
     }
 
+    // ECB mode is required by the Sunshine/GameStream protocol
+    @SuppressWarnings("InsecureCryptoUsage")
     private static byte[] decryptAes(byte[] encryptedData, byte[] aesKey) {
-        BlockCipher aesEngine = new AESLightEngine();
-        aesEngine.init(false, new KeyParameter(aesKey));
-        return performBlockCipher(aesEngine, encryptedData);
+        try {
+            Cipher cipher = Cipher.getInstance("AES/ECB/NoPadding");
+            SecretKeySpec keySpec = new SecretKeySpec(aesKey, "AES");
+            cipher.init(Cipher.DECRYPT_MODE, keySpec);
+
+            // Pad input to block size if necessary
+            int blockSize = cipher.getBlockSize();
+            int blockRoundedSize = (encryptedData.length + (blockSize - 1)) & -blockSize;
+            byte[] paddedInput = Arrays.copyOf(encryptedData, blockRoundedSize);
+
+            return cipher.doFinal(paddedInput);
+        } catch (Exception e) {
+            Log.e(TAG, "decryptAes failed: " + e.getMessage(), e);
+            throw new RuntimeException(e);
+        }
     }
 
+    // ECB mode is required by the Sunshine/GameStream protocol
+    @SuppressWarnings("InsecureCryptoUsage")
     private static byte[] encryptAes(byte[] plaintextData, byte[] aesKey) {
-        BlockCipher aesEngine = new AESLightEngine();
-        aesEngine.init(true, new KeyParameter(aesKey));
-        return performBlockCipher(aesEngine, plaintextData);
+        try {
+            Cipher cipher = Cipher.getInstance("AES/ECB/NoPadding");
+            SecretKeySpec keySpec = new SecretKeySpec(aesKey, "AES");
+            cipher.init(Cipher.ENCRYPT_MODE, keySpec);
+
+            // Pad input to block size if necessary
+            int blockSize = cipher.getBlockSize();
+            int blockRoundedSize = (plaintextData.length + (blockSize - 1)) & -blockSize;
+            byte[] paddedInput = Arrays.copyOf(plaintextData, blockRoundedSize);
+
+            return cipher.doFinal(paddedInput);
+        } catch (Exception e) {
+            Log.e(TAG, "encryptAes failed: " + e.getMessage(), e);
+            throw new RuntimeException(e);
+        }
     }
 
-    private static byte[] generateAesKey(PairingHashAlgorithm hashAlgo, byte[] keyData) {
-        return Arrays.copyOf(hashAlgo.hashData(keyData), 16);
+    private static byte[] generateAesKey(byte[] keyData) {
+        return Arrays.copyOf(sha256Hash(keyData), 16);
     }
 
     private static byte[] concatBytes(byte[] a, byte[] b) {
@@ -184,25 +211,12 @@ public class PairingManager {
         return serverCert;
     }
 
-    public PairState pair(String serverInfo, String pin) throws IOException, XmlPullParserException {
-        PairingHashAlgorithm hashAlgo;
-
-        int serverMajorVersion = http.getServerMajorVersion(serverInfo);
-
-        Log.i(TAG, "Server major version: " + serverMajorVersion);
-        if (serverMajorVersion >= 7) {
-            // Gen 7+ uses SHA-256 hashing
-            hashAlgo = new Sha256PairingHash();
-        } else {
-            // Prior to Gen 7, SHA-1 is used
-            hashAlgo = new Sha1PairingHash();
-        }
-
+    public PairState pair(String pin) throws IOException, XmlPullParserException {
         // Generate a salt for hashing the PIN
         byte[] salt = generateRandomBytes();
 
-        // Combine the salt and pin, then create an AES key from them
-        byte[] aesKey = generateAesKey(hashAlgo, saltPin(salt, pin));
+        // Combine the salt and pin, then create an AES key from them (using SHA-256)
+        byte[] aesKey = generateAesKey(saltPin(salt, pin));
 
         // Send the salt and get the server cert. This doesn't have a read timeout
         // because the user must enter the PIN before the server responds
@@ -216,7 +230,7 @@ public class PairingManager {
         // Save this cert for retrieval later
         serverCert = extractPlainCert(getCert);
         if (serverCert == null) {
-            // Attempting to pair while another device is pairing will cause GFE
+            // Attempting to pair while another device is pairing will cause the server
             // to give an empty cert in the response.
             http.unpair();
             return PairState.ALREADY_IN_PROGRESS;
@@ -240,12 +254,12 @@ public class PairingManager {
         byte[] encServerChallengeResponse = hexToBytes(NvHTTP.getXmlString(challengeResp, "challengeresponse", true));
         byte[] decServerChallengeResponse = decryptAes(encServerChallengeResponse, aesKey);
 
-        byte[] serverResponse = Arrays.copyOfRange(decServerChallengeResponse, 0, hashAlgo.getHashLength());
-        byte[] serverChallenge = Arrays.copyOfRange(decServerChallengeResponse, hashAlgo.getHashLength(), hashAlgo.getHashLength() + 16);
+        byte[] serverResponse = Arrays.copyOfRange(decServerChallengeResponse, 0, SHA256_HASH_LENGTH);
+        byte[] serverChallenge = Arrays.copyOfRange(decServerChallengeResponse, SHA256_HASH_LENGTH, SHA256_HASH_LENGTH + 16);
 
         // Using another 16 bytes secret, compute a challenge response hash using the secret, our cert sig, and the challenge
         byte[] clientSecret = generateRandomBytes();
-        byte[] challengeRespHash = hashAlgo.hashData(concatBytes(concatBytes(serverChallenge, cert.getSignature()), clientSecret));
+        byte[] challengeRespHash = sha256Hash(concatBytes(concatBytes(serverChallenge, cert.getSignature()), clientSecret));
         byte[] challengeRespEncrypted = encryptAes(challengeRespHash, aesKey);
         String secretResp = http.executePairingCommand("serverchallengeresp=" + bytesToHex(challengeRespEncrypted), true);
         if (!NvHTTP.getXmlString(secretResp, "paired", true).equals("1")) {
@@ -268,7 +282,7 @@ public class PairingManager {
         }
 
         // Ensure the server challenge matched what we expected (aka the PIN was correct)
-        byte[] serverChallengeRespHash = hashAlgo.hashData(concatBytes(concatBytes(randomChallenge, serverCert.getSignature()), serverSecret));
+        byte[] serverChallengeRespHash = sha256Hash(concatBytes(concatBytes(randomChallenge, serverCert.getSignature()), serverSecret));
         if (!Arrays.equals(serverChallengeRespHash, serverResponse)) {
             // Cancel the pairing process
             http.unpair();
@@ -293,43 +307,5 @@ public class PairingManager {
         }
 
         return PairState.PAIRED;
-    }
-
-    private interface PairingHashAlgorithm {
-        int getHashLength();
-
-        byte[] hashData(byte[] data);
-    }
-
-    private static class Sha1PairingHash implements PairingHashAlgorithm {
-        public int getHashLength() {
-            return 20;
-        }
-
-        public byte[] hashData(byte[] data) {
-            try {
-                MessageDigest md = MessageDigest.getInstance("SHA-1");
-                return md.digest(data);
-            } catch (NoSuchAlgorithmException e) {
-                Log.e(TAG, "hashData: " + e.getMessage(), e);
-                throw new RuntimeException(e);
-            }
-        }
-    }
-
-    private static class Sha256PairingHash implements PairingHashAlgorithm {
-        public int getHashLength() {
-            return 32;
-        }
-
-        public byte[] hashData(byte[] data) {
-            try {
-                MessageDigest md = MessageDigest.getInstance("SHA-256");
-                return md.digest(data);
-            } catch (NoSuchAlgorithmException e) {
-                Log.e(TAG, "hashData: " + e.getMessage(), e);
-                throw new RuntimeException(e);
-            }
-        }
     }
 }
