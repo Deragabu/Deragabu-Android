@@ -63,6 +63,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     private static final int BATTERY_RECHECK_INTERVAL_MS = 120 * 1000;
 
+    // Gamepad keep-alive interval to prevent controller sleep (30 seconds)
+    private static final int GAMEPAD_KEEPALIVE_INTERVAL_MS = 30 * 1000;
+
     private static final Map<Integer, Integer> ANDROID_TO_LI_BUTTON_MAP = Map.ofEntries(
             Map.entry(KeyEvent.KEYCODE_BUTTON_A, ControllerPacket.A_FLAG),
             Map.entry(KeyEvent.KEYCODE_BUTTON_B, ControllerPacket.B_FLAG),
@@ -116,6 +119,22 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     private final Handler backgroundThreadHandler;
     private boolean hasGameController;
     private boolean stopped = false;
+
+    // Gamepad keep-alive mechanism to prevent controller sleep
+    private final Runnable gamepadKeepaliveRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (stopped) {
+                return;
+            }
+
+            // Poll all connected gamepads to keep them awake
+            performGamepadKeepalive();
+
+            // Schedule next keepalive
+            backgroundThreadHandler.postDelayed(this, GAMEPAD_KEEPALIVE_INTERVAL_MS);
+        }
+    };
 
     private final PreferenceConfiguration prefConfig;
     private short currentControllers, initialControllers;
@@ -194,6 +213,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
         // Register ourselves for input device notifications
         inputManager.registerInputDeviceListener(this, null);
+
+        // Start gamepad keep-alive mechanism to prevent controller sleep
+        startGamepadKeepalive();
     }
 
     private static InputDevice.MotionRange getMotionRangeForJoystickAxis(InputDevice dev, int axis) {
@@ -256,6 +278,9 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         // Stop new device contexts from being created or used
         stopped = true;
 
+        // Stop gamepad keep-alive mechanism
+        stopGamepadKeepalive();
+
         // Unregister our input device callbacks
         inputManager.unregisterInputDeviceListener(this);
 
@@ -278,6 +303,94 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
         }
 
         backgroundHandlerThread.quit();
+    }
+
+    /**
+     * Start the gamepad keep-alive mechanism to prevent controllers from sleeping
+     * due to inactivity. This is particularly important for devices like K90 Pro Max
+     * that aggressively put controllers to sleep.
+     */
+    private void startGamepadKeepalive() {
+        Log.i(TAG, "Starting gamepad keep-alive mechanism");
+        backgroundThreadHandler.postDelayed(gamepadKeepaliveRunnable, GAMEPAD_KEEPALIVE_INTERVAL_MS);
+    }
+
+    /**
+     * Stop the gamepad keep-alive mechanism
+     */
+    private void stopGamepadKeepalive() {
+        Log.i(TAG, "Stopping gamepad keep-alive mechanism");
+        backgroundThreadHandler.removeCallbacks(gamepadKeepaliveRunnable);
+    }
+
+    /**
+     * Perform keep-alive actions on all connected gamepads.
+     * This polls the device state and optionally sends a minimal vibration
+     * to prevent the controller from entering sleep mode.
+     */
+    private void performGamepadKeepalive() {
+        int[] deviceIds = InputDevice.getDeviceIds();
+        int gamepadCount = 0;
+
+        for (int deviceId : deviceIds) {
+            InputDevice device = InputDevice.getDevice(deviceId);
+            if (device == null) {
+                continue;
+            }
+
+            // Check if this is a gamepad
+            if (!isGameControllerDevice(device)) {
+                continue;
+            }
+
+            gamepadCount++;
+
+            // Method 1: Poll the device state by reading its properties
+            // This access alone can help keep some controllers awake
+            try {
+                // Reading these properties triggers communication with the device
+                device.getName();
+                device.getMotionRanges();
+
+                // Check battery state if available - this also polls the device
+                BatteryState batteryState = device.getBatteryState();
+                if (batteryState.isPresent()) {
+                    // Just accessing the battery state helps keep the device awake
+                    batteryState.getCapacity();
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Error polling gamepad " + deviceId + " for keep-alive: " + e.getMessage());
+            }
+
+            // Method 2: Send a zero-amplitude vibration pulse (if supported)
+            // This is a no-op vibration that keeps the controller awake without being noticeable
+            try {
+                VibratorManager vibratorManager = device.getVibratorManager();
+                int[] vibratorIds = vibratorManager.getVibratorIds();
+                if (vibratorIds.length > 0) {
+                    // Create a minimal vibration effect (1ms at 0 amplitude)
+                    // This triggers communication without any actual vibration
+                    VibrationEffect effect = VibrationEffect.createOneShot(1, 1);
+                    CombinedVibration combinedVibration = CombinedVibration.createParallel(effect);
+
+                    VibrationAttributes attrs = new VibrationAttributes.Builder()
+                            .setUsage(VibrationAttributes.USAGE_MEDIA)
+                            .build();
+
+                    vibratorManager.vibrate(combinedVibration, attrs);
+
+                    // Immediately cancel to minimize any perceptible vibration
+                    vibratorManager.cancel();
+                }
+            } catch (Exception e) {
+                // Vibration not supported or failed, that's fine
+                Log.v(TAG, "Keep-alive vibration not available for device " + deviceId);
+            }
+        }
+
+        if (gamepadCount > 0) {
+            Log.v(TAG, "Gamepad keep-alive performed for " + gamepadCount + " controller(s)");
+        }
     }
 
     public void disableSensors() {
