@@ -65,6 +65,7 @@ public class PreferenceConfiguration {
     private static final String GAMEPAD_TOUCHPAD_AS_MOUSE_PREF_STRING = "checkbox_gamepad_touchpad_as_mouse";
     private static final String GAMEPAD_MOTION_SENSORS_PREF_STRING = "checkbox_gamepad_motion_sensors";
     private static final String GAMEPAD_MOTION_FALLBACK_PREF_STRING = "checkbox_gamepad_motion_fallback";
+    private static final String SHORT_RANGE_CONTROLLER_PREF_STRING = "checkbox_short_range_controller";
     private static final String ENABLE_MDNS_PREF_STRING = "checkbox_enable_mdns";
     private static final String ENCRYPTION_MODE_PREF_STRING = "list_encryption_mode";
 
@@ -104,6 +105,7 @@ public class PreferenceConfiguration {
     private static final boolean DEFAULT_GAMEPAD_TOUCHPAD_AS_MOUSE = false;
     private static final boolean DEFAULT_GAMEPAD_MOTION_SENSORS = true;
     private static final boolean DEFAULT_GAMEPAD_MOTION_FALLBACK = false;
+    private static final boolean DEFAULT_SHORT_RANGE_CONTROLLER = false;
     private static final boolean DEFAULT_ENABLE_MDNS = false;
     private static final String DEFAULT_ENCRYPTION_MODE = "enabled";
 
@@ -148,6 +150,7 @@ public class PreferenceConfiguration {
     public boolean gamepadMotionSensors;
     public boolean gamepadTouchpadAsMouse;
     public boolean gamepadMotionSensorsFallbackToDevice;
+    public boolean shortRangeController;
     public boolean enableMdns;
     public String encryptionMode;
 
@@ -782,6 +785,7 @@ public class PreferenceConfiguration {
         config.gamepadTouchpadAsMouse = prefs.getBoolean(GAMEPAD_TOUCHPAD_AS_MOUSE_PREF_STRING, DEFAULT_GAMEPAD_TOUCHPAD_AS_MOUSE);
         config.gamepadMotionSensors = prefs.getBoolean(GAMEPAD_MOTION_SENSORS_PREF_STRING, DEFAULT_GAMEPAD_MOTION_SENSORS);
         config.gamepadMotionSensorsFallbackToDevice = prefs.getBoolean(GAMEPAD_MOTION_FALLBACK_PREF_STRING, DEFAULT_GAMEPAD_MOTION_FALLBACK);
+        config.shortRangeController = prefs.getBoolean(SHORT_RANGE_CONTROLLER_PREF_STRING, DEFAULT_SHORT_RANGE_CONTROLLER);
         config.enableMdns = prefs.getBoolean(ENABLE_MDNS_PREF_STRING, DEFAULT_ENABLE_MDNS);
         config.encryptionMode = prefs.getString(ENCRYPTION_MODE_PREF_STRING, DEFAULT_ENCRYPTION_MODE);
 

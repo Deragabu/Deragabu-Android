@@ -64,8 +64,8 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     private static final int BATTERY_RECHECK_INTERVAL_MS = 120 * 1000;
 
-    // Gamepad keep-alive interval to prevent controller sleep (10 seconds - more aggressive)
-    private static final int GAMEPAD_KEEPALIVE_INTERVAL_MS = 10 * 1000;
+    // Gamepad keep-alive interval to prevent controller sleep (5 seconds - very aggressive for USB controllers like Razer Kishi V2)
+    private static final int GAMEPAD_KEEPALIVE_INTERVAL_MS = 5 * 1000;
 
     private static final Map<Integer, Integer> ANDROID_TO_LI_BUTTON_MAP = Map.ofEntries(
             Map.entry(KeyEvent.KEYCODE_BUTTON_A, ControllerPacket.A_FLAG),
@@ -103,6 +103,12 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     );
 
     private final Vector2d inputVector = new Vector2d();
+
+    // Short-range controller optimization constants
+    // For controllers like Kishi V2, Joy-Con style with limited analog range
+    // These controllers have SHORT travel distance, making them EASY to reach max but SENSITIVE to light touch
+    private static final float SHORT_RANGE_STICK_DEADZONE_BOOST = 0.10f;  // Additional deadzone for sticks to filter light touches
+    private static final float SHORT_RANGE_TRIGGER_DEADZONE = 0.25f;  // Larger trigger deadzone to avoid accidental presses
 
     private final SparseArray<InputDeviceContext> inputDeviceContexts = new SparseArray<>();
     private final SparseArray<UsbDeviceContext> usbDeviceContexts = new SparseArray<>();
@@ -346,14 +352,11 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
 
     /**
      * Perform keep-alive actions on all connected gamepads.
-     * This uses multiple strategies to prevent controllers from entering sleep mode:
-     * 1. Query input device state and read all axis values
-     * 2. Read LED/Light state if available
-     * 3. Send minimal vibration pulse
-     * 4. Access sensor data if available
+     * The most effective strategy is to actively poll the controller's current state,
+     * which forces the USB/HID stack to communicate with the device.
      */
     private void performGamepadKeepalive() {
-        // Also iterate through our tracked input device contexts
+        // Iterate through all tracked input device contexts
         for (int i = 0; i < inputDeviceContexts.size(); i++) {
             InputDeviceContext context = inputDeviceContexts.valueAt(i);
             if (context == null) {
@@ -366,104 +369,112 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 continue;
             }
 
+            // Only process external controllers (USB/Bluetooth)
+            if (!context.external) {
+                continue;
+            }
+
             try {
-                // Strategy 1: Read device descriptor and properties
-                // This forces the system to communicate with the device
+                // Strategy 1: Force a re-read of the device by requesting its current state
+                // This triggers the kernel to poll the USB device
                 device.getDescriptor();
-                device.getProductId();
-                device.getVendorId();
-                device.getControllerNumber();
 
-                // Strategy 2: Read all motion ranges (axis configurations)
-                // This queries the device's capabilities
+                // Re-read motion ranges - this queries the device
                 for (InputDevice.MotionRange range : device.getMotionRanges()) {
-                    range.getAxis();
-                    range.getRange();
+                    range.getFlat();
+                    range.getFuzz();
                 }
 
-                // Strategy 3: Query battery state - this often requires device communication
-                BatteryState batteryState = device.getBatteryState();
-                if (batteryState.isPresent()) {
-                    batteryState.getCapacity();
-                    batteryState.getStatus();
-                }
-
-                // Strategy 4: Access lights/LEDs if available
+                // Strategy 2: Query battery state - this triggers USB communication
                 try {
-                    LightsManager lightsManager = device.getLightsManager();
-                    for (Light light : lightsManager.getLights()) {
-                        // Just reading the light state triggers communication
-                        light.getType();
+                    BatteryState batteryState = device.getBatteryState();
+                    if (batteryState.isPresent()) {
+                        batteryState.getCapacity();
                     }
-                } catch (Exception ignored) {
-                    // Lights not available
-                }
+                } catch (Exception ignored) {}
 
-                // Strategy 5: Send a very short vibration pulse
-                // Use a slightly longer duration to ensure the command reaches the controller
+                // Strategy 3: Try vibration with actual perceptible feedback
+                // This is the most reliable way to keep USB controllers awake
                 try {
                     VibratorManager vibratorManager = device.getVibratorManager();
                     int[] vibratorIds = vibratorManager.getVibratorIds();
                     if (vibratorIds.length > 0) {
-                        // Create a 5ms vibration at minimum amplitude
-                        VibrationEffect effect = VibrationEffect.createOneShot(5, 1);
+                        // Send a noticeable but brief vibration pulse
+                        // 30ms at amplitude 20 - should be felt but not annoying
+                        VibrationEffect effect = VibrationEffect.createOneShot(30, 20);
                         CombinedVibration combinedVibration = CombinedVibration.createParallel(effect);
-
                         VibrationAttributes attrs = new VibrationAttributes.Builder()
                                 .setUsage(VibrationAttributes.USAGE_MEDIA)
                                 .build();
-
                         vibratorManager.vibrate(combinedVibration, attrs);
+                        Log.d(TAG, "Sent vibration keep-alive to: " + device.getName());
                     }
-                } catch (Exception ignored) {
-                    // Vibration not supported
+                } catch (Exception e) {
+                    Log.v(TAG, "Vibration not available: " + e.getMessage());
                 }
 
-                // Strategy 6: If sensor support is enabled, query sensors
-                if (prefConfig.gamepadMotionSensors) {
-                    try {
-                        SensorManager sensorManager = device.getSensorManager();
-                        sensorManager.getSensorList(Sensor.TYPE_ALL);
-                    } catch (Exception ignored) {
-                        // Sensors not available
-                    }
-                }
-
-                Log.v(TAG, "Keep-alive ping sent to controller: " + device.getName() + " (ID: " + deviceId + ")");
+                Log.d(TAG, "Keep-alive sent to: " + device.getName());
 
             } catch (Exception e) {
-                Log.w(TAG, "Error performing keep-alive for device " + deviceId + ": " + e.getMessage());
+                Log.w(TAG, "Keep-alive error for device " + deviceId + ": " + e.getMessage());
             }
         }
 
-        // Also poll by device IDs to catch any controllers we might have missed
-        int[] deviceIds = InputDevice.getDeviceIds();
-        for (int deviceId : deviceIds) {
+        // Also send keep-alive to USB controllers managed by UsbDriverService
+        sendUsbControllerKeepalive();
+    }
+
+
+    /**
+     * Send keep-alive commands to USB controllers via the USB driver service.
+     * This sends a zero-amplitude rumble command to keep the USB device active.
+     */
+    private void sendUsbControllerKeepalive() {
+        // Method 1: Send rumble to controllers managed by UsbDriverService
+        for (int i = 0; i < usbDeviceContexts.size(); i++) {
+            UsbDeviceContext context = usbDeviceContexts.valueAt(i);
+            if (context != null && context.device != null) {
+                try {
+                    // Send a zero-amplitude rumble to keep the USB connection active
+                    // This actually sends HID output reports to the device
+                    context.device.rumble((short) 0, (short) 0);
+                    Log.v(TAG, "Sent USB rumble keep-alive to controller ID: " + context.device.getControllerId());
+                } catch (Exception e) {
+                    Log.v(TAG, "Failed to send USB keep-alive: " + e.getMessage());
+                }
+            }
+        }
+
+        // Method 2: For standard HID controllers (like Razer Kishi V2) that are handled
+        // by the Android input stack, try to use individual vibrators
+        for (int i = 0; i < inputDeviceContexts.size(); i++) {
+            InputDeviceContext context = inputDeviceContexts.valueAt(i);
+            if (context == null) continue;
+
+            int deviceId = inputDeviceContexts.keyAt(i);
             InputDevice device = InputDevice.getDevice(deviceId);
-            if (device == null) {
-                continue;
-            }
+            if (device == null) continue;
 
-            // Only process game controllers we haven't already processed
-            if (inputDeviceContexts.get(deviceId) != null) {
-                continue;
-            }
-
-            if (!isGameControllerDevice(device)) {
-                continue;
-            }
+            // Check if this looks like a USB controller (external device)
+            if (!context.external) continue;
 
             try {
-                // Basic polling for controllers without context
-                device.getDescriptor();
-                device.getName();
+                // Try to get the device's vibrator directly and send a pulse
+                // Using deprecated API for compatibility with older devices
+                @SuppressWarnings("deprecation")
+                Vibrator deviceVib = device.getVibrator();
+                if (deviceVib != null && deviceVib.hasVibrator()) {
+                    // Create a minimal vibration effect
+                    VibrationEffect effect = VibrationEffect.createOneShot(10, VibrationEffect.DEFAULT_AMPLITUDE);
+                    deviceVib.vibrate(effect);
 
-                BatteryState batteryState = device.getBatteryState();
-                if (batteryState.isPresent()) {
-                    batteryState.getCapacity();
+                    // Cancel immediately to minimize perceptible vibration
+                    deviceVib.cancel();
+
+                    Log.v(TAG, "Sent direct vibrator keep-alive to: " + device.getName());
                 }
-            } catch (Exception ignored) {
-                // Best effort
+            } catch (Exception e) {
+                Log.v(TAG, "Direct vibrator keep-alive failed for " + device.getName() + ": " + e.getMessage());
             }
         }
     }
@@ -1629,9 +1640,28 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
     }
 
     private void handleDeadZone(Vector2d stickVector, float deadzoneRadius) {
-        if (stickVector.getMagnitude() <= deadzoneRadius) {
+        // Apply short-range controller optimization if enabled - use larger deadzone
+        float effectiveDeadzone = deadzoneRadius;
+        if (prefConfig.shortRangeController) {
+            // Increase deadzone to filter out light touches on sensitive short-travel sticks
+            effectiveDeadzone = Math.max(deadzoneRadius, deadzoneRadius + SHORT_RANGE_STICK_DEADZONE_BOOST);
+        }
+
+        if (stickVector.getMagnitude() <= effectiveDeadzone) {
             // Deadzone
             stickVector.initialize(0, 0);
+            return;
+        }
+
+        // For short-range controllers, remap the remaining range to full output
+        // This ensures smooth transition from deadzone edge to max
+        if (prefConfig.shortRangeController && effectiveDeadzone > 0) {
+            float magnitude = (float) stickVector.getMagnitude();
+            // Remap from [deadzone, 1.0] to [0, 1.0]
+            float remappedMagnitude = (magnitude - effectiveDeadzone) / (1.0f - effectiveDeadzone);
+            // Preserve direction, apply new magnitude
+            float scale = remappedMagnitude / magnitude;
+            stickVector.initialize(stickVector.getX() * scale, stickVector.getY() * scale);
         }
 
         // We're not normalizing here because we let the computer handle the deadzones.
@@ -1680,11 +1710,29 @@ public class ControllerHandler implements InputManager.InputDeviceListener, UsbD
                 }
             }
 
-            if (lt <= context.triggerDeadzone) {
+            // Apply deadzone - use larger deadzone for short-range controllers
+            float effectiveTriggerDeadzone = context.triggerDeadzone;
+            if (prefConfig.shortRangeController) {
+                // Use the larger of the configured deadzone or our short-range minimum
+                effectiveTriggerDeadzone = Math.max(effectiveTriggerDeadzone, SHORT_RANGE_TRIGGER_DEADZONE);
+            }
+
+            if (lt <= effectiveTriggerDeadzone) {
                 lt = 0;
             }
-            if (rt <= context.triggerDeadzone) {
+            if (rt <= effectiveTriggerDeadzone) {
                 rt = 0;
+            }
+
+            // For short-range controllers, remap trigger range to ensure full output range is usable
+            if (prefConfig.shortRangeController) {
+                // Remap from [deadzone, 1.0] to [0, 1.0] for smooth response
+                if (lt > 0) {
+                    lt = (lt - effectiveTriggerDeadzone) / (1.0f - effectiveTriggerDeadzone);
+                }
+                if (rt > 0) {
+                    rt = (rt - effectiveTriggerDeadzone) / (1.0f - effectiveTriggerDeadzone);
+                }
             }
 
             context.leftTrigger = (byte) (lt * 0xFF);

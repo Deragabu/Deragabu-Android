@@ -1,42 +1,187 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="wrap_content"
+<com.google.android.material.card.MaterialCardView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="280dp"
     android:layout_height="wrap_content"
-    android:padding="20dp">
-    <RelativeLayout
-        android:id="@+id/grid_image_layout"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content">
-        <ImageView
-            android:id="@+id/grid_image"
-            android:layout_centerHorizontal="true"
-            android:layout_width="125dp"
-            android:layout_height="125dp">
-        </ImageView>
-        <ImageView
-            android:id="@+id/grid_overlay"
-            android:layout_centerHorizontal="true"
-            android:layout_marginTop="28dp"
-            android:layout_width="50dp"
-            android:layout_height="50dp">
-        </ImageView>
-        <ProgressBar
-            android:id="@+id/grid_spinner"
-            android:layout_centerHorizontal="true"
-            android:layout_marginTop="28dp"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
-            android:indeterminate="true">
-        </ProgressBar>
-    </RelativeLayout>
-    <TextView
-        android:id="@+id/grid_text"
-        android:layout_width="125dp"
+    android:layout_margin="8dp"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="4dp"
+    app:cardBackgroundColor="#1E1E1E"
+    app:strokeWidth="0dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_below="@id/grid_image_layout"
-        android:layout_marginTop="10dp"
-        android:layout_centerHorizontal="true"
-        android:gravity="center"
-        android:textSize="18sp" >
-    </TextView>
-</RelativeLayout>
+        android:orientation="vertical">
+
+        <!-- Main content area -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <!-- Header: Icon + Computer name -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="8dp">
+
+                <ImageView
+                    android:id="@+id/grid_image"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:layout_marginEnd="8dp"
+                    android:scaleType="fitCenter"
+                    android:contentDescription="@null" />
+
+                <TextView
+                    android:id="@+id/grid_text"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textSize="18sp"
+                    android:textColor="#FFFFFF"
+                    android:textStyle="bold"
+                    android:maxLines="1"
+                    android:ellipsize="end" />
+
+                <!-- Loading spinner -->
+                <ProgressBar
+                    android:id="@+id/grid_spinner"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:indeterminate="true"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
+            <!-- Status chips row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="8dp">
+
+                <!-- Status chip -->
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/status_chip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:textSize="12sp"
+                    app:chipMinHeight="24dp"
+                    app:chipCornerRadius="12dp"
+                    app:chipStrokeWidth="0dp"
+                    app:textStartPadding="8dp"
+                    app:textEndPadding="8dp"
+                    android:clickable="false" />
+
+                <!-- Running game chip (hidden by default) -->
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/game_running_chip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="32dp"
+                    android:layout_marginStart="8dp"
+                    android:text="@string/applist_menu_resume"
+                    android:textSize="12sp"
+                    app:chipMinHeight="24dp"
+                    app:chipCornerRadius="12dp"
+                    app:chipBackgroundColor="#2196F3"
+                    android:textColor="#FFFFFF"
+                    app:chipStrokeWidth="0dp"
+                    app:textStartPadding="8dp"
+                    app:textEndPadding="8dp"
+                    android:clickable="false"
+                    android:visibility="gone" />
+
+                <!-- Status overlay (lock icon for unpaired) - hidden, keeping for compatibility -->
+                <ImageView
+                    android:id="@+id/grid_overlay"
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:visibility="gone"
+                    android:contentDescription="@null" />
+
+            </LinearLayout>
+
+            <!-- GPU info -->
+            <TextView
+                android:id="@+id/gpu_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="14sp"
+                android:textColor="#AAAAAA"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:visibility="gone" />
+
+            <!-- IP Address -->
+            <TextView
+                android:id="@+id/address_text"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textSize="14sp"
+                android:textColor="#AAAAAA"
+                android:maxLines="1"
+                android:ellipsize="end"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
+        <!-- Divider -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="#333333" />
+
+        <!-- Action buttons row -->
+        <LinearLayout
+            android:id="@+id/action_buttons_layout"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:orientation="horizontal"
+            android:gravity="start|center_vertical"
+            android:paddingHorizontal="8dp">
+
+            <!-- Refresh button -->
+            <ImageButton
+                android:id="@+id/refresh_button"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_refresh"
+                android:contentDescription="@string/pcview_menu_send_wol"
+                android:scaleType="center"
+                app:tint="#AAAAAA" />
+
+            <!-- Wake button -->
+            <ImageButton
+                android:id="@+id/wake_button"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_power"
+                android:contentDescription="@string/pcview_menu_send_wol"
+                android:scaleType="center"
+                app:tint="#AAAAAA" />
+
+            <!-- Delete button -->
+            <ImageButton
+                android:id="@+id/delete_button"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:src="@drawable/ic_delete"
+                android:contentDescription="@string/pcview_menu_delete_pc"
+                android:scaleType="center"
+                app:tint="#FF5252" />
+
+        </LinearLayout>
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

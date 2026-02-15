@@ -131,6 +131,11 @@
             android:title="@string/title_checkbox_gamepad_motion_fallback"
             android:summary="@string/summary_checkbox_gamepad_motion_fallback"
             android:defaultValue="false" />
+        <CheckBoxPreference
+            android:key="checkbox_short_range_controller"
+            android:title="@string/title_checkbox_short_range_controller"
+            android:summary="@string/summary_checkbox_short_range_controller"
+            android:defaultValue="false" />
         <Preference
             android:key="pref_gamepad_test"
             android:title="@string/title_gamepad_test"
