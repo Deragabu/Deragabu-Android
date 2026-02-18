@@ -77,6 +77,7 @@ public class GamepadTestActivity extends AppCompatActivity implements InputManag
         setContentView(R.layout.activity_gamepad_test);
 
         UiHelper.notifyNewRootView(this);
+        UiHelper.applyStatusBarPadding(findViewById(android.R.id.content));
 
         gamepadListContainer = findViewById(R.id.gamepad_list_container);
         gamepadStatus = findViewById(R.id.gamepad_status);

@@ -805,14 +805,16 @@ public class PreferenceConfiguration {
         config.enableMdns = prefs.getBoolean(ENABLE_MDNS_PREF_STRING, DEFAULT_ENABLE_MDNS);
         config.encryptionMode = prefs.getString(ENCRYPTION_MODE_PREF_STRING, DEFAULT_ENCRYPTION_MODE);
 
-        // WireGuard tunnel settings
-        config.wgEnabled = prefs.getBoolean(WG_ENABLED_PREF_STRING, DEFAULT_WG_ENABLED);
-        config.wgPrivateKey = prefs.getString(WG_PRIVATE_KEY_PREF_STRING, "");
-        config.wgPeerPublicKey = prefs.getString(WG_PEER_PUBLIC_KEY_PREF_STRING, "");
-        config.wgPresharedKey = prefs.getString(WG_PRESHARED_KEY_PREF_STRING, "");
-        config.wgEndpoint = prefs.getString(WG_ENDPOINT_PREF_STRING, "");
-        config.wgTunnelAddress = prefs.getString(WG_TUNNEL_ADDRESS_PREF_STRING, "");
-        config.wgServerAddress = prefs.getString(WG_SERVER_ADDRESS_PREF_STRING, "");
+        // WireGuard tunnel settings - read from the dedicated wireguard_config SharedPreferences
+        // to stay in sync with WireGuardSettingsActivity which saves to that file
+        SharedPreferences wgPrefs = context.getSharedPreferences("wireguard_config", Context.MODE_PRIVATE);
+        config.wgEnabled = wgPrefs.getBoolean("wg_enabled", DEFAULT_WG_ENABLED);
+        config.wgPrivateKey = wgPrefs.getString("wg_private_key", "");
+        config.wgPeerPublicKey = wgPrefs.getString("wg_peer_public_key", "");
+        config.wgPresharedKey = wgPrefs.getString("wg_preshared_key", "");
+        config.wgEndpoint = wgPrefs.getString("wg_peer_endpoint", "");
+        config.wgTunnelAddress = wgPrefs.getString("wg_tunnel_address", "");
+        config.wgServerAddress = wgPrefs.getString("wg_server_address", "");
 
         return config;
     }

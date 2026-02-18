@@ -12,6 +12,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 import com.limelight.binding.PlatformBinding;
+import com.limelight.binding.video.WireGuardManager;
 import com.limelight.discovery.DiscoveryService;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvApp;
@@ -20,6 +21,7 @@ import com.limelight.nvstream.http.PairingManager;
 import com.limelight.nvstream.mdns.MdnsComputer;
 import com.limelight.nvstream.mdns.MdnsDiscoveryListener;
 import com.limelight.preferences.PreferenceConfiguration;
+import com.limelight.preferences.WireGuardSettingsActivity;
 import com.limelight.utils.CacheHelper;
 import com.limelight.utils.ServerHelper;
 
@@ -321,11 +323,20 @@ public class ComputerManagerService extends Service {
     }
 
     private void populateExternalAddress(ComputerDetails details) {
-        boolean boundToNetwork = false;
         ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
 
         // Check if we're currently connected to a VPN which may send our
-
+        // traffic through a different path than the default network.
+        // In that case, we should skip external address population since
+        // STUN results may not accurately reflect the PC's WAN address.
+        Network activeNetwork = connMgr.getActiveNetwork();
+        if (activeNetwork != null) {
+            android.net.NetworkCapabilities caps = connMgr.getNetworkCapabilities(activeNetwork);
+            if (caps != null && caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)) {
+                Log.i(TAG, "VPN detected, skipping external address population");
+                return;
+            }
+        }
     }
 
     private MdnsDiscoveryListener createDiscoveryListener() {
@@ -567,17 +578,44 @@ public class ComputerManagerService extends Service {
         tuple.pollingThread.start();
     }
 
+    private ComputerDetails.AddressTuple getWireGuardServerAddress() {
+        // Read the WireGuard server address from preferences if WireGuard is enabled
+        // and the tunnel is active
+        if (!WireGuardManager.isTunnelActive()) {
+            return null;
+        }
+
+        if (!WireGuardSettingsActivity.isEnabled(this)) {
+            return null;
+        }
+
+        PreferenceConfiguration prefConfig = PreferenceConfiguration.readPreferences(this);
+        if (prefConfig.wgServerAddress != null && !prefConfig.wgServerAddress.isEmpty()) {
+            try {
+                return new ComputerDetails.AddressTuple(prefConfig.wgServerAddress, NvHTTP.DEFAULT_HTTP_PORT);
+            } catch (IllegalArgumentException e) {
+                Log.w(TAG, "Invalid WireGuard server address: " + prefConfig.wgServerAddress, e);
+            }
+        }
+        return null;
+    }
+
     private ComputerDetails parallelPollPc(ComputerDetails details) throws InterruptedException {
         ParallelPollTuple localInfo = new ParallelPollTuple(details.localAddress, details);
         ParallelPollTuple manualInfo = new ParallelPollTuple(details.manualAddress, details);
         ParallelPollTuple remoteInfo = new ParallelPollTuple(details.remoteAddress, details);
         ParallelPollTuple ipv6Info = new ParallelPollTuple(details.ipv6Address, details);
 
+        // When WireGuard is active, also poll the server's WireGuard tunnel address
+        ComputerDetails.AddressTuple wgAddress = getWireGuardServerAddress();
+        ParallelPollTuple wgInfo = new ParallelPollTuple(wgAddress, details);
+
         // These must be started in order of precedence for the deduplication algorithm
         // to result in the correct behavior.
         HashSet<ComputerDetails.AddressTuple> uniqueAddresses = new HashSet<>();
         startParallelPollThread(localInfo, uniqueAddresses);
         startParallelPollThread(manualInfo, uniqueAddresses);
+        startParallelPollThread(wgInfo, uniqueAddresses);
         startParallelPollThread(remoteInfo, uniqueAddresses);
         startParallelPollThread(ipv6Info, uniqueAddresses);
 
@@ -605,6 +643,19 @@ public class ComputerManagerService extends Service {
                 if (manualInfo.returnedDetails != null) {
                     manualInfo.returnedDetails.activeAddress = manualInfo.address;
                     return manualInfo.returnedDetails;
+                }
+            }
+
+            // Now WireGuard tunnel address
+            //noinspection SynchronizationOnLocalVariableOrMethodParameter
+            synchronized (wgInfo) {
+                while (!wgInfo.complete) {
+                    wgInfo.wait();
+                }
+
+                if (wgInfo.returnedDetails != null) {
+                    wgInfo.returnedDetails.activeAddress = wgInfo.address;
+                    return wgInfo.returnedDetails;
                 }
             }
 
@@ -638,6 +689,7 @@ public class ComputerManagerService extends Service {
             // interrupted by an attempt to stop polling.
             localInfo.interrupt();
             manualInfo.interrupt();
+            wgInfo.interrupt();
             remoteInfo.interrupt();
             ipv6Info.interrupt();
         }
@@ -715,6 +767,47 @@ public class ComputerManagerService extends Service {
 
         ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         connMgr.registerDefaultNetworkCallback(networkCallback);
+
+        // Monitor for WireGuard tunnel state changes to trigger re-polling
+        // Since the userspace WireGuard tunnel doesn't trigger ConnectivityManager callbacks,
+        // we need to explicitly handle tunnel state transitions.
+        WireGuardManager.setStatusCallback(new WireGuardManager.StatusCallback() {
+            @Override
+            public void onConnecting() {
+                // Nothing to do while connecting
+            }
+
+            @Override
+            public void onConnected() {
+                Log.i(TAG, "WireGuard tunnel connected, resetting PC state to trigger re-poll");
+                synchronized (pollingTuples) {
+                    for (PollingTuple tuple : pollingTuples) {
+                        tuple.computer.state = ComputerDetails.State.UNKNOWN;
+                        if (listener != null) {
+                            listener.notifyComputerUpdated(tuple.computer);
+                        }
+                    }
+                }
+            }
+
+            @Override
+            public void onDisconnected() {
+                Log.i(TAG, "WireGuard tunnel disconnected, resetting PC state to trigger re-poll");
+                synchronized (pollingTuples) {
+                    for (PollingTuple tuple : pollingTuples) {
+                        tuple.computer.state = ComputerDetails.State.UNKNOWN;
+                        if (listener != null) {
+                            listener.notifyComputerUpdated(tuple.computer);
+                        }
+                    }
+                }
+            }
+
+            @Override
+            public void onError(String error) {
+                Log.w(TAG, "WireGuard tunnel error: " + error);
+            }
+        });
     }
 
     /**
@@ -758,6 +851,9 @@ public class ComputerManagerService extends Service {
     public void onDestroy() {
         ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         connMgr.unregisterNetworkCallback(networkCallback);
+
+        // Clear the WireGuard status callback to avoid leaking this service
+        WireGuardManager.setStatusCallback(null);
 
         if (discoveryBinder != null) {
             // Unbind from the discovery service
