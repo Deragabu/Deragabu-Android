@@ -454,4 +454,71 @@ public class MoonBridge {
     public static native String getLaunchUrlQueryParameters();
 
     public static native void init();
+
+    // ========================================================================
+    // WireGuard tunnel (boringtun) - userspace WireGuard, no system TUN needed
+    // ========================================================================
+
+    /**
+     * Start a WireGuard tunnel using boringtun.
+     *
+     * @param privateKey     32-byte WireGuard private key (raw bytes)
+     * @param peerPublicKey  32-byte WireGuard peer public key (raw bytes)
+     * @param presharedKey   32-byte optional preshared key (null if not used)
+     * @param endpointAddr   WireGuard peer endpoint IP address string
+     * @param endpointPort   WireGuard peer endpoint port
+     * @param tunnelAddr     Local tunnel IP address (e.g. "10.0.0.2")
+     * @param keepaliveSecs  Persistent keepalive interval in seconds (0 to disable)
+     * @param mtu            Tunnel MTU (typically 1420)
+     * @return 0 on success, negative error code on failure
+     */
+    public static native int wgStartTunnel(byte[] privateKey, byte[] peerPublicKey,
+                                           byte[] presharedKey, String endpointAddr,
+                                           int endpointPort, String tunnelAddr,
+                                           int keepaliveSecs, int mtu);
+
+    /**
+     * Stop the WireGuard tunnel.
+     */
+    public static native void wgStopTunnel();
+
+    /**
+     * Check if the WireGuard tunnel is active and ready.
+     *
+     * @return true if tunnel is active with completed handshake
+     */
+    public static native boolean wgIsTunnelActive();
+
+    /**
+     * Create a UDP proxy through the WireGuard tunnel.
+     * Returns a local port number that moonlight-common-c should use instead of
+     * directly connecting to the remote server. Traffic sent to this local port
+     * will be tunneled through WireGuard to the target address.
+     *
+     * @param targetAddr The real server IP address
+     * @param targetPort The real server port
+     * @return Local proxy port number (>0) on success, 0 on failure
+     */
+    public static native int wgCreateUdpProxy(String targetAddr, int targetPort);
+
+    /**
+     * Parse a base64-encoded WireGuard key into raw 32 bytes.
+     *
+     * @param base64Key Base64-encoded WireGuard key
+     * @return 32-byte raw key, or null if invalid
+     */
+    public static byte[] parseWireGuardKey(String base64Key) {
+        if (base64Key == null || base64Key.isEmpty()) {
+            return null;
+        }
+        try {
+            byte[] decoded = android.util.Base64.decode(base64Key, android.util.Base64.DEFAULT);
+            if (decoded.length != 32) {
+                return null;
+            }
+            return decoded;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
 }

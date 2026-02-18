@@ -28,6 +28,14 @@ public class StreamConfiguration {
     private int colorSpace;
     private boolean persistGamepadsAfterDisconnect;
     private String encryptionMode;
+    // WireGuard tunnel configuration
+    private boolean wgEnabled;
+    private String wgPrivateKey;
+    private String wgPeerPublicKey;
+    private String wgPresharedKey;
+    private String wgEndpoint;
+    private String wgTunnelAddress;
+    private String wgServerAddress;
 
     public static class Builder {
         private StreamConfiguration config = new StreamConfiguration();

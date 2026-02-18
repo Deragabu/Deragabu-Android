@@ -68,6 +68,13 @@ public class PreferenceConfiguration {
     private static final String SHORT_RANGE_CONTROLLER_PREF_STRING = "checkbox_short_range_controller";
     private static final String ENABLE_MDNS_PREF_STRING = "checkbox_enable_mdns";
     private static final String ENCRYPTION_MODE_PREF_STRING = "list_encryption_mode";
+    private static final String WG_ENABLED_PREF_STRING = "checkbox_wg_enabled";
+    private static final String WG_PRIVATE_KEY_PREF_STRING = "edit_wg_private_key";
+    private static final String WG_PEER_PUBLIC_KEY_PREF_STRING = "edit_wg_peer_public_key";
+    private static final String WG_PRESHARED_KEY_PREF_STRING = "edit_wg_preshared_key";
+    private static final String WG_ENDPOINT_PREF_STRING = "edit_wg_endpoint";
+    private static final String WG_TUNNEL_ADDRESS_PREF_STRING = "edit_wg_tunnel_address";
+    private static final String WG_SERVER_ADDRESS_PREF_STRING = "edit_wg_server_address";
 
     static final String DEFAULT_RESOLUTION = "1920x1080";
     static final String DEFAULT_FPS = "60";
@@ -108,6 +115,7 @@ public class PreferenceConfiguration {
     private static final boolean DEFAULT_SHORT_RANGE_CONTROLLER = false;
     private static final boolean DEFAULT_ENABLE_MDNS = false;
     private static final String DEFAULT_ENCRYPTION_MODE = "enabled";
+    private static final boolean DEFAULT_WG_ENABLED = false;
 
 
     public static final int FRAME_PACING_MIN_LATENCY = 0;
@@ -153,6 +161,14 @@ public class PreferenceConfiguration {
     public boolean shortRangeController;
     public boolean enableMdns;
     public String encryptionMode;
+    // WireGuard tunnel settings
+    public boolean wgEnabled;
+    public String wgPrivateKey;
+    public String wgPeerPublicKey;
+    public String wgPresharedKey;
+    public String wgEndpoint;
+    public String wgTunnelAddress;
+    public String wgServerAddress;
 
     public static boolean isNativeResolution(int width, int height) {
         // It's not a native resolution if it matches an existing resolution option
@@ -788,6 +804,15 @@ public class PreferenceConfiguration {
         config.shortRangeController = prefs.getBoolean(SHORT_RANGE_CONTROLLER_PREF_STRING, DEFAULT_SHORT_RANGE_CONTROLLER);
         config.enableMdns = prefs.getBoolean(ENABLE_MDNS_PREF_STRING, DEFAULT_ENABLE_MDNS);
         config.encryptionMode = prefs.getString(ENCRYPTION_MODE_PREF_STRING, DEFAULT_ENCRYPTION_MODE);
+
+        // WireGuard tunnel settings
+        config.wgEnabled = prefs.getBoolean(WG_ENABLED_PREF_STRING, DEFAULT_WG_ENABLED);
+        config.wgPrivateKey = prefs.getString(WG_PRIVATE_KEY_PREF_STRING, "");
+        config.wgPeerPublicKey = prefs.getString(WG_PEER_PUBLIC_KEY_PREF_STRING, "");
+        config.wgPresharedKey = prefs.getString(WG_PRESHARED_KEY_PREF_STRING, "");
+        config.wgEndpoint = prefs.getString(WG_ENDPOINT_PREF_STRING, "");
+        config.wgTunnelAddress = prefs.getString(WG_TUNNEL_ADDRESS_PREF_STRING, "");
+        config.wgServerAddress = prefs.getString(WG_SERVER_ADDRESS_PREF_STRING, "");
 
         return config;
     }

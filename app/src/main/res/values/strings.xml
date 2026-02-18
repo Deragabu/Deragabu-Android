@@ -330,6 +330,26 @@
     <string name="encryption_warning_confirm">I understand the risks</string>
     <string name="encryption_warning_cancel">Cancel</string>
 
+    <!-- WireGuard Tunnel (boringtun) -->
+    <string name="category_wireguard">WireGuard Tunnel</string>
+    <string name="title_wg_enabled">Enable WireGuard tunnel</string>
+    <string name="summary_wg_enabled">Route streaming traffic through a userspace WireGuard tunnel (no system VPN needed)</string>
+    <string name="title_wg_private_key">Private key</string>
+    <string name="summary_wg_private_key">Your WireGuard private key (base64)</string>
+    <string name="title_wg_peer_public_key">Peer public key</string>
+    <string name="summary_wg_peer_public_key">WireGuard peer (server) public key (base64)</string>
+    <string name="title_wg_preshared_key">Preshared key (optional)</string>
+    <string name="summary_wg_preshared_key">Optional additional preshared key (base64)</string>
+    <string name="title_wg_endpoint">Endpoint</string>
+    <string name="summary_wg_endpoint">WireGuard peer endpoint (IP:port, e.g. 1.2.3.4:51820)</string>
+    <string name="title_wg_tunnel_address">Tunnel address</string>
+    <string name="summary_wg_tunnel_address">Your IP address inside the WireGuard tunnel (e.g. 10.0.0.2)</string>
+    <string name="title_wg_server_address">Server address in tunnel</string>
+    <string name="summary_wg_server_address">The streaming server\'s IP address inside the WireGuard tunnel (e.g. 10.0.0.1)</string>
+    <string name="wg_not_configured">WireGuard is not fully configured</string>
+    <string name="wg_tunnel_failed">WireGuard tunnel failed to start: %s</string>
+    <string name="wg_handshake_timeout">WireGuard handshake timed out</string>
+
     <!-- Notification -->
     <string name="stats_notification_channel_name">Streaming Statistics</string>
     <string name="stats_notification_channel_description">Shows real-time streaming performance statistics</string>

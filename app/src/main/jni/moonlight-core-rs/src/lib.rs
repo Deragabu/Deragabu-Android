@@ -19,6 +19,8 @@ mod jni_helpers;
 mod callbacks;
 #[cfg(target_os = "android")]
 mod jni_bridge;
+#[cfg(target_os = "android")]
+pub mod wireguard;
 
 #[cfg(target_os = "android")]
 pub use jni_bridge::*;

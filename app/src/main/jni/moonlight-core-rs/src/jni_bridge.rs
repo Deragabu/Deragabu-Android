@@ -1062,3 +1062,174 @@ unsafe fn jni_get_byte_array_region(
     ((*jni_env).get_byte_array_region)(env, array, start, len, buf);
 }
 
+// ============================================================================
+// WireGuard JNI Bridge Functions
+// ============================================================================
+
+/// Start a WireGuard tunnel
+/// Parameters:
+///   privateKey: 32-byte private key
+///   peerPublicKey: 32-byte peer public key
+///   presharedKey: 32-byte preshared key (nullable)
+///   endpointAddr: endpoint address string (e.g. "1.2.3.4")
+///   endpointPort: endpoint port
+///   tunnelAddr: tunnel IP address string (e.g. "10.0.0.2")
+///   keepaliveSecs: keepalive interval in seconds
+///   mtu: tunnel MTU
+/// Returns: 0 on success, non-zero on failure
+#[no_mangle]
+pub extern "C" fn Java_com_limelight_nvstream_jni_MoonBridge_wgStartTunnel(
+    env: JNIEnv,
+    _clazz: JClass,
+    private_key: JByteArray,
+    peer_public_key: JByteArray,
+    preshared_key: JByteArray,
+    endpoint_addr: JString,
+    endpoint_port: JInt,
+    tunnel_addr: JString,
+    keepalive_secs: JInt,
+    mtu: JInt,
+) -> JInt {
+    info!("wgStartTunnel called, endpoint port: {}", endpoint_port);
+
+    // Read private key
+    let mut priv_key = [0u8; 32];
+    unsafe { jni_get_byte_array_region(env, private_key, 0, 32, priv_key.as_mut_ptr() as *mut i8) };
+
+    // Read peer public key
+    let mut pub_key = [0u8; 32];
+    unsafe { jni_get_byte_array_region(env, peer_public_key, 0, 32, pub_key.as_mut_ptr() as *mut i8) };
+
+    // Read preshared key (optional)
+    let psk = if !preshared_key.is_null() {
+        let mut psk_bytes = [0u8; 32];
+        unsafe { jni_get_byte_array_region(env, preshared_key, 0, 32, psk_bytes.as_mut_ptr() as *mut i8) };
+        Some(psk_bytes)
+    } else {
+        None
+    };
+
+    // Get endpoint address string
+    let endpoint_str = unsafe { jni_get_string_utf_chars(env, endpoint_addr) };
+    if endpoint_str.is_null() {
+        error!("wgStartTunnel: endpoint address is null");
+        return -1;
+    }
+    let endpoint_addr_str = unsafe { CStr::from_ptr(endpoint_str) }.to_string_lossy().to_string();
+    unsafe { jni_release_string_utf_chars(env, endpoint_addr, endpoint_str) };
+
+    // Get tunnel address string
+    let tunnel_str = unsafe { jni_get_string_utf_chars(env, tunnel_addr) };
+    if tunnel_str.is_null() {
+        error!("wgStartTunnel: tunnel address is null");
+        return -2;
+    }
+    let tunnel_addr_str = unsafe { CStr::from_ptr(tunnel_str) }.to_string_lossy().to_string();
+    unsafe { jni_release_string_utf_chars(env, tunnel_addr, tunnel_str) };
+
+    // Parse addresses
+    let endpoint_ip: std::net::IpAddr = match endpoint_addr_str.parse() {
+        Ok(ip) => ip,
+        Err(e) => {
+            error!("wgStartTunnel: invalid endpoint address '{}': {}", endpoint_addr_str, e);
+            return -3;
+        }
+    };
+
+    let tunnel_ip: std::net::IpAddr = match tunnel_addr_str.parse() {
+        Ok(ip) => ip,
+        Err(e) => {
+            error!("wgStartTunnel: invalid tunnel address '{}': {}", tunnel_addr_str, e);
+            return -4;
+        }
+    };
+
+    let endpoint = std::net::SocketAddr::new(endpoint_ip, endpoint_port as u16);
+
+    let config = crate::wireguard::WireGuardConfig {
+        private_key: priv_key,
+        peer_public_key: pub_key,
+        preshared_key: psk,
+        endpoint,
+        tunnel_address: tunnel_ip,
+        keepalive_secs: keepalive_secs as u16,
+        mtu: mtu as u16,
+    };
+
+    match crate::wireguard::wg_start_tunnel(config) {
+        Ok(()) => {
+            info!("WireGuard tunnel started successfully");
+            0
+        }
+        Err(e) => {
+            error!("Failed to start WireGuard tunnel: {}", e);
+            -5
+        }
+    }
+}
+
+/// Stop the WireGuard tunnel
+#[no_mangle]
+pub extern "C" fn Java_com_limelight_nvstream_jni_MoonBridge_wgStopTunnel(
+    _env: JNIEnv,
+    _clazz: JClass,
+) {
+    info!("wgStopTunnel called");
+    crate::wireguard::wg_stop_tunnel();
+}
+
+/// Check if the WireGuard tunnel is active
+/// Returns: 1 if active, 0 if not
+#[no_mangle]
+pub extern "C" fn Java_com_limelight_nvstream_jni_MoonBridge_wgIsTunnelActive(
+    _env: JNIEnv,
+    _clazz: JClass,
+) -> JBoolean {
+    if crate::wireguard::wg_is_tunnel_active() {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
+}
+
+/// Create a UDP proxy through the WireGuard tunnel
+/// Parameters:
+///   targetAddr: target address string (the real server IP)
+///   targetPort: target port
+/// Returns: the local port to connect to (>0) on success, 0 on failure
+#[no_mangle]
+pub extern "C" fn Java_com_limelight_nvstream_jni_MoonBridge_wgCreateUdpProxy(
+    env: JNIEnv,
+    _clazz: JClass,
+    target_addr: JString,
+    target_port: JInt,
+) -> JInt {
+    let addr_str = unsafe { jni_get_string_utf_chars(env, target_addr) };
+    if addr_str.is_null() {
+        return 0;
+    }
+    let addr = unsafe { CStr::from_ptr(addr_str) }.to_string_lossy().to_string();
+    unsafe { jni_release_string_utf_chars(env, target_addr, addr_str) };
+
+    let target_ip: std::net::IpAddr = match addr.parse() {
+        Ok(ip) => ip,
+        Err(e) => {
+            error!("wgCreateUdpProxy: invalid address '{}': {}", addr, e);
+            return 0;
+        }
+    };
+
+    let target = std::net::SocketAddr::new(target_ip, target_port as u16);
+
+    match crate::wireguard::wg_create_udp_proxy(target) {
+        Ok(local_addr) => {
+            info!("Created WireGuard UDP proxy: local port {} -> {}", local_addr.port(), target);
+            local_addr.port() as JInt
+        }
+        Err(e) => {
+            error!("Failed to create WireGuard UDP proxy: {}", e);
+            0
+        }
+    }
+}
+
