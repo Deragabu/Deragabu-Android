@@ -69,29 +69,26 @@ public class NvHTTP {
     public static final int LONG_CONNECTION_TIMEOUT = 5000;
     public static final int READ_TIMEOUT = 7000;
 
-    // Enable WireGuard routing via WgSocketFactory
-    // When enabled, OkHttp uses WgSocket to route TCP connections through WireGuard
-    private static volatile boolean useDirectWgHttp = false;
-
     /**
-     * Enable or disable WireGuard routing for HTTP.
-     * When enabled, OkHttp uses WgSocketFactory to route connections through WireGuard.
-     * WireGuard HTTP must be configured via WireGuardManager.configureHttp() first.
+     * Deprecated: No longer needed. WireGuard routing is now automatic when configured.
+     * Kept for API compatibility.
      *
-     * @param enabled true to enable WireGuard routing
+     * @param enabled ignored
      */
+    @Deprecated
     public static void setUseDirectWgHttp(boolean enabled) {
-        useDirectWgHttp = enabled;
-        Log.i(TAG, "WireGuard HTTP routing " + (enabled ? "enabled" : "disabled"));
+        // No-op: WireGuard routing is now automatic when isHttpConfigured() returns true
+        Log.i(TAG, "setUseDirectWgHttp() called with " + enabled + " (ignored - WireGuard routing is automatic)");
     }
 
     /**
      * Check if WireGuard HTTP routing is enabled and configured.
+     * When WireGuard HTTP is configured, all HTTP requests will be routed through WireGuard.
      *
      * @return true if WireGuard HTTP routing is ready to use
      */
     public static boolean isDirectWgHttpEnabled() {
-        return useDirectWgHttp && WireGuardManager.isHttpConfigured();
+        return WireGuardManager.isHttpConfigured();
     }
 
     // Print URL and content to logcat on debug builds

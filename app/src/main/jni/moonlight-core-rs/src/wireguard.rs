@@ -384,12 +384,16 @@ impl WireGuardTunnel {
                 let st = state.lock();
                 match st.endpoint_socket.recv(&mut recv_buf) {
                     Ok(n) => n,
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock 
+                        || e.kind() == io::ErrorKind::TimedOut 
+                        || e.kind() == io::ErrorKind::Interrupted => {
+                        // WouldBlock/TimedOut: no data available, retry
+                        // Interrupted (EINTR): interrupted by signal, retry
                         continue;
                     }
                     Err(e) => {
                         if running.load(Ordering::SeqCst) {
-                            error!("WireGuard endpoint recv error: {}", e);
+                            warn!("WireGuard endpoint recv error: {}", e);
                         }
                         continue;
                     }
@@ -563,7 +567,11 @@ impl WireGuardTunnel {
                 match st.tunnel.update_timers(&mut dst_buf) {
                     TunnResult::WriteToNetwork(data) => {
                         if let Err(e) = st.endpoint_socket.send(data) {
-                            debug!("Failed to send timer packet: {}", e);
+                            // EPERM (os error 1) is common on Android when network state changes
+                            // Only log non-EPERM errors to reduce log spam
+                            if e.raw_os_error() != Some(1) {
+                                debug!("Failed to send timer packet: {}", e);
+                            }
                         }
                     }
                     TunnResult::Err(e) => {

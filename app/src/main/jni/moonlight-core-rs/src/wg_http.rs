@@ -142,6 +142,10 @@ fn do_handshake(tunnel: &mut Tunn, socket: &UdpSocket) -> io::Result<()> {
                     _ => {}
                 }
             }
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
+                // EINTR - interrupted by signal, just retry
+                continue;
+            }
             Err(e) => return Err(e),
         }
     }
@@ -379,14 +383,16 @@ impl SharedTcpProxy {
                 }
                 Err(ref e)
                     if e.kind() == io::ErrorKind::WouldBlock
-                        || e.kind() == io::ErrorKind::TimedOut =>
+                        || e.kind() == io::ErrorKind::TimedOut
+                        || e.kind() == io::ErrorKind::Interrupted =>
                 {
-                    // Timeout - flush any pending outgoing packets from other threads
+                    // WouldBlock/TimedOut: no data, flush pending packets
+                    // Interrupted (EINTR): interrupted by signal, retry
                     proxy.flush_outgoing();
                 }
                 Err(e) => {
                     if proxy.running.load(Ordering::SeqCst) {
-                        debug!("WG TCP proxy: recv error: {}", e);
+                        warn!("WG TCP proxy: recv error: {}", e);
                     }
                 }
                 _ => {}
