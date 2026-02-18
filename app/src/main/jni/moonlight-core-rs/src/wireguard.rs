@@ -405,16 +405,26 @@ impl WireGuardTunnel {
                     }
                     drop(st); // Release lock before forwarding
 
-                    if let Some((src_port, dst_port, payload)) = parse_udp_from_ip_packet(data) {
-                        // Find the proxy for this source port (the remote server port)
-                        let proxies = udp_proxies.lock();
-                        if let Some(proxy) = proxies.get(&src_port) {
-                            // Send decapsulated data back to moonlight-common-c via the local proxy
-                            if let Err(e) = proxy.proxy_socket.send_to(payload, proxy.local_addr) {
-                                debug!("Failed to forward decapsulated packet to proxy: {}", e);
+                    // Check IP protocol (byte at offset 9 in IPv4 header)
+                    if data.len() >= 20 {
+                        let protocol = data[9];
+                        if protocol == 6 {
+                            // TCP packet - forward to HTTP shared proxy's virtual stack
+                            crate::wg_http::wg_http_inject_packet(data);
+                        } else if protocol == 17 {
+                            // UDP packet - forward to the right proxy
+                            if let Some((src_port, dst_port, payload)) = parse_udp_from_ip_packet(data) {
+                                // Find the proxy for this source port (the remote server port)
+                                let proxies = udp_proxies.lock();
+                                if let Some(proxy) = proxies.get(&src_port) {
+                                    // Send decapsulated data back to moonlight-common-c via the local proxy
+                                    if let Err(e) = proxy.proxy_socket.send_to(payload, proxy.local_addr) {
+                                        debug!("Failed to forward decapsulated packet to proxy: {}", e);
+                                    }
+                                } else {
+                                    debug!("No proxy found for source port {}", src_port);
+                                }
                             }
-                        } else {
-                            debug!("No proxy found for source port {}", src_port);
                         }
                     }
                 }
@@ -1009,9 +1019,10 @@ static GLOBAL_TUNNEL: Mutex<Option<WireGuardTunnel>> = Mutex::new(None);
 
 /// Initialize and start the global WireGuard tunnel
 pub fn wg_start_tunnel(config: WireGuardConfig) -> io::Result<()> {
-    // Stop the HTTP shared tunnel first to avoid two concurrent WireGuard sessions
-    // with the same keys (causes InvalidCounter errors)
-    crate::wg_http::wg_http_stop_shared_tunnel();
+    // Note: We don't stop the HTTP shared proxy here anymore.
+    // Instead, the HTTP proxy will detect streaming is active and route through
+    // the streaming tunnel using wg_send_ip_packet().
+    // This allows HTTP requests to work during streaming.
     
     let mut global = GLOBAL_TUNNEL.lock();
     
