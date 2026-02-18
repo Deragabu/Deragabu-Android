@@ -1634,8 +1634,9 @@ pub extern "C" fn Java_com_limelight_nvstream_jni_MoonBridge_wgCreateTcpProxy(
         mtu: mtu as u16,
     };
 
-    // Create TCP proxy
-    match crate::wireguard::create_tcp_proxy(config, target_sock_addr) {
+    // Create TCP proxy - try to bind to the target port for transparent proxying
+    // (moonlight-common-c expects RTSP on port 47989/48010)
+    match crate::wireguard::create_tcp_proxy(config, target_sock_addr, Some(target_port as u16)) {
         Ok(port) => {
             info!("Created WireGuard TCP proxy on port {} -> {}", port, target_sock_addr);
             port as JInt

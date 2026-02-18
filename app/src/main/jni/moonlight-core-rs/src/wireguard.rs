@@ -735,13 +735,25 @@ static NEXT_EPHEMERAL_PORT: AtomicU16 = AtomicU16::new(10000);
 
 /// Create a TCP proxy that listens locally and relays to the target through WireGuard.
 /// Each incoming connection gets its own WireGuard tunnel instance for isolation.
+/// If prefer_local_port is Some, tries to bind to that port first (for transparent proxying).
 /// Returns the local port to connect to.
 pub fn create_tcp_proxy(
     config: WireGuardConfig,
     target_addr: SocketAddr,
+    prefer_local_port: Option<u16>,
 ) -> io::Result<u16> {
-    // Create local TCP listener
-    let listener = TcpListener::bind("127.0.0.1:0")?;
+    // Create local TCP listener - try preferred port first, fall back to random
+    let listener = if let Some(port) = prefer_local_port {
+        match TcpListener::bind(format!("127.0.0.1:{}", port)) {
+            Ok(l) => l,
+            Err(e) => {
+                warn!("Could not bind TCP proxy to port {}, using random port: {}", port, e);
+                TcpListener::bind("127.0.0.1:0")?
+            }
+        }
+    } else {
+        TcpListener::bind("127.0.0.1:0")?
+    };
     let local_port = listener.local_addr()?.port();
     
     TCP_PROXY_RUNNING.store(true, Ordering::SeqCst);
@@ -1086,7 +1098,9 @@ pub fn wg_send_ip_packet(packet: &[u8]) -> io::Result<()> {
     match global.as_ref() {
         Some(tunnel) => {
             let mut state = tunnel.state.lock();
-            match state.tunnel.encapsulate(packet, &mut state.encode_buf) {
+            // Use a local buffer to avoid borrow conflict
+            let mut encode_buf = vec![0u8; WG_BUFFER_SIZE];
+            match state.tunnel.encapsulate(packet, &mut encode_buf) {
                 TunnResult::WriteToNetwork(data) => {
                     state.endpoint_socket.send(data)?;
                     Ok(())

@@ -25,7 +25,7 @@ use smoltcp::iface::{Config, Interface, SocketSet};
 use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
 use smoltcp::socket::tcp::{Socket as TcpSocket, SocketBuffer, State as TcpState};
 use smoltcp::time::Instant as SmolInstant;
-use smoltcp::wire::{IpAddress, IpCidr, IpEndpoint};
+use smoltcp::wire::{IpAddress, IpCidr};
 
 use boringtun::noise::{Tunn, TunnResult};
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -927,7 +927,7 @@ impl SharedTcpProxy {
             }
         } else {
             // Use our own tunnel
-            let mut tunnel = self.tunnel.lock();
+            let tunnel = self.tunnel.lock();
             let mut buf = vec![0u8; MAX_PACKET_SIZE + 200];
 
             for packet in &packets {
@@ -975,7 +975,7 @@ impl SharedTcpProxy {
                     // Decapsulate the WG packet(s)
                     let mut ip_packets = Vec::new();
                     {
-                        let mut tunnel = proxy.tunnel.lock();
+                        let tunnel = proxy.tunnel.lock();
                         match tunnel.decapsulate(None, &recv_buf[..n], &mut dec_buf) {
                             TunnResult::WriteToTunnelV4(data, _)
                             | TunnResult::WriteToTunnelV6(data, _) => {
@@ -1042,7 +1042,7 @@ impl SharedTcpProxy {
             // (streaming tunnel handles keepalives, we just handle connection cleanup)
             if !crate::wireguard::wg_is_tunnel_active() {
                 // Update WG timers (keepalive, etc.)
-                let mut tunnel = proxy.tunnel.lock();
+                let tunnel = proxy.tunnel.lock();
                 loop {
                     match tunnel.update_timers(&mut buf) {
                         TunnResult::WriteToNetwork(data) => {
@@ -1051,7 +1051,6 @@ impl SharedTcpProxy {
                         _ => break,
                     }
                 }
-            }
             }
 
             // Periodic stale connection cleanup (every ~15 seconds)
