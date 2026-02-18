@@ -468,8 +468,10 @@ public class NvHTTP {
             if (localProxyPort <= 0) {
                 throw new IOException("Failed to create WireGuard TCP proxy for port " + targetPort);
             }
+            Log.i(TAG, "Created WireGuard TCP proxy: port " + targetPort + " -> 127.0.0.1:" + localProxyPort);
+        } else {
+            Log.i(TAG, "Using existing WireGuard TCP proxy: port " + targetPort + " -> 127.0.0.1:" + localProxyPort);
         }
-        Log.d(TAG, "WireGuard TCP proxy: port " + targetPort + " -> 127.0.0.1:" + localProxyPort);
         return baseUrl.newBuilder()
                 .host("127.0.0.1")
                 .port(localProxyPort)

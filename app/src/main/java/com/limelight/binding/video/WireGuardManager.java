@@ -336,7 +336,9 @@ public class WireGuardManager {
      * @return Local proxy port, or -1 if no proxy exists
      */
     public static int getTcpProxyPort(int targetPort) {
-        return nativeHttpGetProxyPort(targetPort);
+        int result = nativeHttpGetProxyPort(targetPort);
+        Log.i(TAG, "getTcpProxyPort(" + targetPort + ") = " + result);
+        return result;
     }
 
     // Native methods implemented in Rust

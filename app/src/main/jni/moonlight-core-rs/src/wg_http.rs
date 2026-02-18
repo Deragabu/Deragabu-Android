@@ -1041,10 +1041,17 @@ fn get_or_create_shared_proxy(config: &WgHttpConfig) -> io::Result<Arc<SharedTcp
 /// Create a TCP proxy for a specific target port through WireGuard.
 /// Uses the stored global HTTP config. Returns the local port to connect to.
 pub fn wg_http_create_tcp_proxy(target_port: u16) -> io::Result<u16> {
+    info!(">>> wg_http_create_tcp_proxy CALLED: target_port={}", target_port);
+    
     let config = GLOBAL_HTTP_CONFIG
         .lock()
         .clone()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotConnected, "WG HTTP not configured"))?;
+        .ok_or_else(|| {
+            error!("wg_http_create_tcp_proxy: GLOBAL_HTTP_CONFIG is None!");
+            io::Error::new(io::ErrorKind::NotConnected, "WG HTTP not configured")
+        })?;
+    
+    info!("wg_http_create_tcp_proxy: config loaded, server_ip={}", config.server_ip);
 
     // Check if proxy already exists for this target port
     {
@@ -1071,24 +1078,31 @@ pub fn wg_http_create_tcp_proxy(target_port: u16) -> io::Result<u16> {
     {
         let mut proxies = TCP_PROXIES.lock();
         if proxies.is_none() {
+            info!("Initializing TCP_PROXIES HashMap");
             *proxies = Some(HashMap::new());
         }
         proxies.as_mut().unwrap().insert(target_port, TcpProxyState {
             local_port,
             running: running.clone(),
         });
+        let proxy_count = proxies.as_ref().map(|m| m.len()).unwrap_or(0);
+        info!("TCP proxy stored: target_port={} -> local_port={}, total proxies={}", 
+              target_port, local_port, proxy_count);
     }
 
     // Spawn listener thread
+    let local_port_for_log = local_port;
     thread::Builder::new()
         .name(format!("wg-http-tcp-proxy-{}", target_port))
         .spawn(move || {
+            info!("TCP proxy listener thread started for port {}, listening on 127.0.0.1:{}", 
+                  target_port, local_port_for_log);
             listener.set_nonblocking(true).ok();
 
             while running_clone.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((client, addr)) => {
-                        debug!("TCP proxy for port {}: new connection from {}", target_port, addr);
+                        info!("TCP proxy for port {}: new connection from {}", target_port, addr);
                         let cfg = config.clone();
                         let tp = target_port;
                         let run = running_clone.clone();
@@ -1097,7 +1111,7 @@ pub fn wg_http_create_tcp_proxy(target_port: u16) -> io::Result<u16> {
                             .name(format!("wg-tcp-conn-{}-{}", tp, addr.port()))
                             .spawn(move || {
                                 if let Err(e) = handle_tcp_proxy_connection(client, cfg, tp, &run) {
-                                    debug!("TCP proxy connection error: {}", e);
+                                    warn!("TCP proxy connection error for port {}: {}", tp, e);
                                 }
                             })
                             .ok();
@@ -1141,7 +1155,7 @@ pub fn wg_http_stop_tcp_proxies() {
 /// Get the local port for a TCP proxy targeting a specific port
 pub fn wg_http_get_proxy_port(target_port: u16) -> Option<u16> {
     let proxies = TCP_PROXIES.lock();
-    proxies.as_ref().and_then(|map| {
+    let result = proxies.as_ref().and_then(|map| {
         map.get(&target_port).and_then(|state| {
             if state.running.load(Ordering::SeqCst) {
                 Some(state.local_port)
@@ -1149,7 +1163,10 @@ pub fn wg_http_get_proxy_port(target_port: u16) -> Option<u16> {
                 None
             }
         })
-    })
+    });
+    info!("wg_http_get_proxy_port({}) = {:?}, proxies_exists={}", 
+          target_port, result, proxies.is_some());
+    result
 }
 
 /// Handle a single TCP connection through the shared WireGuard tunnel.
@@ -1160,11 +1177,14 @@ fn handle_tcp_proxy_connection(
     target_port: u16,
     running: &AtomicBool,
 ) -> io::Result<()> {
+    info!("TCP proxy: starting connection to {}:{}", config.server_ip, target_port);
+    
     client.set_nonblocking(true)?;
     client.set_nodelay(true)?;
 
     // Get the shared proxy (creates WG tunnel + virtual stack if needed)
     let proxy = get_or_create_shared_proxy(&config)?;
+    info!("TCP proxy: shared proxy obtained, initiating TCP connect");
 
     // Initiate TCP connection through virtual stack
     let (conn_id, rx) = proxy.virtual_stack.tcp_connect(config.server_ip, target_port);
@@ -1191,6 +1211,7 @@ fn handle_tcp_proxy_connection(
         // Check for connection reset
         match proxy.virtual_stack.get_tcp_state(&conn_id) {
             Some(VirtualTcpState::Closed) | None => {
+                warn!("TCP proxy: connection to {}:{} refused/reset", config.server_ip, target_port);
                 proxy.virtual_stack.remove_tcp_connection(&conn_id);
                 return Err(io::Error::new(
                     io::ErrorKind::ConnectionRefused,
@@ -1203,14 +1224,14 @@ fn handle_tcp_proxy_connection(
         thread::sleep(Duration::from_millis(1));
     }
 
-    debug!("TCP proxy connection established to port {}", target_port);
+    info!("TCP proxy connection established to {}:{}", config.server_ip, target_port);
 
     // Bidirectional relay loop
     let mut client_buf = vec![0u8; 32768];
     let relay_start = Instant::now();
-    let relay_timeout = Duration::from_secs(120); // Overall session timeout
+    let relay_timeout = Duration::from_secs(300); // Overall session timeout (5 min for pairing)
     let mut last_activity = Instant::now();
-    let idle_timeout = Duration::from_secs(60);
+    let idle_timeout = Duration::from_secs(180); // Idle timeout (3 min for slow pairing operations)
 
     while running.load(Ordering::SeqCst) {
         if relay_start.elapsed() > relay_timeout {
