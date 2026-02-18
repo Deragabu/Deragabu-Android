@@ -1023,8 +1023,18 @@ impl SharedTcpProxy {
     }
 }
 
-/// Get or create the shared WG tunnel for TCP proxying
+/// Get or create the shared WG tunnel for TCP proxying.
+/// Returns an error if the streaming tunnel is active (to avoid two concurrent WG sessions).
 fn get_or_create_shared_proxy(config: &WgHttpConfig) -> io::Result<Arc<SharedTcpProxy>> {
+    // Don't create a new shared proxy if the streaming tunnel is active
+    // Two concurrent WG sessions with the same keys causes InvalidCounter errors
+    if crate::wireguard::wg_is_tunnel_active() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Cannot use HTTP TCP proxy while streaming tunnel is active (use streaming tunnel instead)"
+        ));
+    }
+    
     let mut shared = SHARED_TCP_PROXY.lock();
     if let Some(ref proxy) = *shared {
         if proxy.running.load(Ordering::SeqCst) {
@@ -1144,10 +1154,16 @@ pub fn wg_http_stop_tcp_proxies() {
     }
 
     // Stop the shared WG tunnel
+    wg_http_stop_shared_tunnel();
+}
+
+/// Stop just the shared WG tunnel (called when streaming tunnel starts to avoid conflicts).
+/// The TCP proxy listeners remain running but will fail to create new connections.
+pub fn wg_http_stop_shared_tunnel() {
     let mut shared = SHARED_TCP_PROXY.lock();
     if let Some(ref proxy) = *shared {
         proxy.stop();
-        info!("Stopped shared WG TCP proxy tunnel");
+        info!("Stopped shared WG TCP proxy tunnel (streaming tunnel may be starting)");
     }
     *shared = None;
 }

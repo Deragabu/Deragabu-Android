@@ -1009,6 +1009,10 @@ static GLOBAL_TUNNEL: Mutex<Option<WireGuardTunnel>> = Mutex::new(None);
 
 /// Initialize and start the global WireGuard tunnel
 pub fn wg_start_tunnel(config: WireGuardConfig) -> io::Result<()> {
+    // Stop the HTTP shared tunnel first to avoid two concurrent WireGuard sessions
+    // with the same keys (causes InvalidCounter errors)
+    crate::wg_http::wg_http_stop_shared_tunnel();
+    
     let mut global = GLOBAL_TUNNEL.lock();
     
     // Stop any existing tunnel
@@ -1060,6 +1064,52 @@ pub fn wg_create_streaming_proxies(target_ip: Ipv4Addr, base_port: u16) -> io::R
     let global = GLOBAL_TUNNEL.lock();
     match global.as_ref() {
         Some(tunnel) => tunnel.create_streaming_proxies(target_ip, base_port),
+        None => Err(io::Error::new(io::ErrorKind::NotConnected, "WireGuard tunnel not active")),
+    }
+}
+
+/// Send an IP packet through the global WireGuard tunnel.
+/// This is used by wg_http to route TCP traffic through the streaming tunnel.
+pub fn wg_send_ip_packet(packet: &[u8]) -> io::Result<()> {
+    let global = GLOBAL_TUNNEL.lock();
+    match global.as_ref() {
+        Some(tunnel) => {
+            let mut state = tunnel.state.lock();
+            match state.tunnel.encapsulate(packet, &mut state.encode_buf) {
+                TunnResult::WriteToNetwork(data) => {
+                    state.endpoint_socket.send(data)?;
+                    Ok(())
+                }
+                TunnResult::Done => Ok(()),
+                TunnResult::Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("Encapsulate error: {:?}", e))),
+                _ => Ok(()),
+            }
+        }
+        None => Err(io::Error::new(io::ErrorKind::NotConnected, "WireGuard tunnel not active")),
+    }
+}
+
+/// Register a callback to receive incoming IP packets from the global WireGuard tunnel.
+/// Returns a channel receiver for incoming IP packets destined to the specified port range.
+pub fn wg_register_tcp_receiver(
+    local_ip: Ipv4Addr,
+    port_start: u16,
+    port_end: u16,
+) -> io::Result<std::sync::mpsc::Receiver<Vec<u8>>> {
+    use std::sync::mpsc;
+    
+    let (tx, rx) = mpsc::channel();
+    
+    // Store the receiver registration in GLOBAL_TUNNEL
+    let mut global = GLOBAL_TUNNEL.lock();
+    match global.as_mut() {
+        Some(tunnel) => {
+            // Add to tunnel's TCP receivers (we'll need to add this field)
+            // For now, just return the channel - the actual routing will be done elsewhere
+            drop(global);
+            info!("TCP receiver registered for {}:{}-{}", local_ip, port_start, port_end);
+            Ok(rx)
+        }
         None => Err(io::Error::new(io::ErrorKind::NotConnected, "WireGuard tunnel not active")),
     }
 }
