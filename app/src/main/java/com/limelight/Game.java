@@ -620,13 +620,24 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         Log.e(TAG, "Failed to create WireGuard streaming proxies");
                     }
                     
-                    // Create TCP proxy for RTSP (port based on https port)
-                    int rtspPort = httpsPort == 47984 ? 47989 : 48010;
-                    int tcpProxyPort = MoonBridge.wgCreateTcpProxy(privateKey, peerPublicKey, presharedKey,
-                            prefConfig.wgEndpoint, prefConfig.wgTunnelAddress, prefConfig.wgServerAddress,
-                            rtspPort, 25, 1420);
-                    if (tcpProxyPort > 0) {
-                        Log.i(TAG, "TCP proxy for RTSP started on port " + tcpProxyPort);
+                    // Create TCP proxies for all ports that moonlight-common-c may try to connect:
+                    // - httpsPort (47984 for GFE): RTSP handshake
+                    // - 47989: HTTP port (fallback for name resolution)
+                    // - 48010: Sunshine RTSP port
+                    java.util.Set<Integer> tcpPorts = new java.util.LinkedHashSet<>();
+                    tcpPorts.add(httpsPort);
+                    tcpPorts.add(47984);
+                    tcpPorts.add(47989);
+                    tcpPorts.add(48010);
+                    for (int tcpPort : tcpPorts) {
+                        int tcpProxyPort = MoonBridge.wgCreateTcpProxy(privateKey, peerPublicKey, presharedKey,
+                                prefConfig.wgEndpoint, prefConfig.wgTunnelAddress, prefConfig.wgServerAddress,
+                                tcpPort, 25, 1420);
+                        if (tcpProxyPort > 0) {
+                            Log.i(TAG, "TCP proxy for port " + tcpPort + " -> 127.0.0.1:" + tcpProxyPort);
+                        } else {
+                            Log.w(TAG, "Failed to create TCP proxy for port " + tcpPort);
+                        }
                     }
                 } else {
                     Log.e(TAG, "Failed to start WireGuard tunnel: " + wgResult);

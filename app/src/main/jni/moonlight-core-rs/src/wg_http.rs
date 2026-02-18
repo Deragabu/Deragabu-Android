@@ -1146,8 +1146,17 @@ pub fn wg_http_create_tcp_proxy(target_port: u16) -> io::Result<u16> {
         }
     }
 
-    // Create local TCP listener
-    let listener = TcpListener::bind("127.0.0.1:0")?;
+    // Create local TCP listener - try to bind to the same port for transparent proxying
+    let listener = match TcpListener::bind(format!("127.0.0.1:{}", target_port)) {
+        Ok(l) => {
+            info!("TCP proxy bound to same port 127.0.0.1:{} (transparent proxy)", target_port);
+            l
+        }
+        Err(e) => {
+            warn!("Could not bind to port {}, using random port: {}", target_port, e);
+            TcpListener::bind("127.0.0.1:0")?
+        }
+    };
     let local_port = listener.local_addr()?.port();
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
