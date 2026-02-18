@@ -48,6 +48,9 @@ public class ComputerManagerService extends Service {
     private static final int APPLIST_POLLING_PERIOD_MS = 30000;
     private static final int APPLIST_FAILED_POLLING_RETRY_MS = 2000;
     private static final int MDNS_QUERY_PERIOD_MS = 1000;
+
+    // Track if we started WireGuard HTTP in this service
+    private boolean wgHttpStartedByService = false;
     private static final int OFFLINE_POLL_TRIES = 3;
     private static final int INITIAL_POLL_TRIES = 2;
     private static final int EMPTY_LIST_THRESHOLD = 3;
@@ -578,6 +581,64 @@ public class ComputerManagerService extends Service {
         tuple.pollingThread.start();
     }
 
+    /**
+     * Configure WireGuard HTTP JNI for direct HTTP requests through the tunnel.
+     * This is needed because the userspace WireGuard tunnel is invisible to OkHttp,
+     * so we must route HTTP requests through the JNI WireGuard HTTP client.
+     */
+    private void configureWireGuardHttp() {
+        if (!WireGuardSettingsActivity.isEnabled(this)) {
+            return;
+        }
+
+        // Don't reconfigure if already active (e.g. Game.java already set it up)
+        if (NvHTTP.isDirectWgHttpEnabled()) {
+            Log.i(TAG, "WireGuard HTTP JNI already active, skipping configuration");
+            return;
+        }
+
+        PreferenceConfiguration prefConfig = PreferenceConfiguration.readPreferences(this);
+        if (!prefConfig.wgEnabled || prefConfig.wgServerAddress == null || prefConfig.wgServerAddress.isEmpty()
+                || prefConfig.wgPrivateKey == null || prefConfig.wgPrivateKey.isEmpty()
+                || prefConfig.wgPeerPublicKey == null || prefConfig.wgPeerPublicKey.isEmpty()
+                || prefConfig.wgEndpoint == null || prefConfig.wgEndpoint.isEmpty()) {
+            Log.w(TAG, "WireGuard enabled but configuration incomplete, skipping HTTP JNI setup");
+            return;
+        }
+
+        try {
+            WireGuardManager.Config wgConfig = new WireGuardManager.Config()
+                    .setPrivateKeyBase64(prefConfig.wgPrivateKey)
+                    .setPeerPublicKeyBase64(prefConfig.wgPeerPublicKey)
+                    .setPresharedKeyBase64(prefConfig.wgPresharedKey.isEmpty() ? null : prefConfig.wgPresharedKey)
+                    .setEndpoint(prefConfig.wgEndpoint)
+                    .setTunnelAddress(prefConfig.wgTunnelAddress);
+
+            if (WireGuardManager.configureHttp(wgConfig, prefConfig.wgServerAddress)) {
+                NvHTTP.setUseDirectWgHttp(true);
+                wgHttpStartedByService = true;
+                Log.i(TAG, "WireGuard HTTP JNI configured for polling (HTTP via JNI, HTTPS via TCP proxy)");
+            } else {
+                Log.e(TAG, "Failed to configure WireGuard HTTP JNI for polling");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to setup WireGuard HTTP JNI for polling", e);
+        }
+    }
+
+    /**
+     * Tear down WireGuard HTTP JNI if we started it.
+     */
+    private void teardownWireGuardHttp() {
+        if (wgHttpStartedByService) {
+            WireGuardManager.clearHttpConfig();
+            NvHTTP.setUseDirectWgHttp(false);
+            WireGuardManager.stopTcpProxies();
+            wgHttpStartedByService = false;
+            Log.i(TAG, "WireGuard HTTP JNI torn down");
+        }
+    }
+
     private ComputerDetails.AddressTuple getWireGuardServerAddress() {
         // Read the WireGuard server address from preferences if WireGuard is enabled
         // and the tunnel is active
@@ -768,6 +829,11 @@ public class ComputerManagerService extends Service {
         ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         connMgr.registerDefaultNetworkCallback(networkCallback);
 
+        // Configure WireGuard HTTP JNI if WireGuard is enabled and the tunnel is active.
+        // This ensures polling requests go through the JNI WireGuard HTTP client
+        // instead of OkHttp (which can't reach through the userspace tunnel).
+        configureWireGuardHttp();
+
         // Monitor for WireGuard tunnel state changes to trigger re-polling
         // Since the userspace WireGuard tunnel doesn't trigger ConnectivityManager callbacks,
         // we need to explicitly handle tunnel state transitions.
@@ -779,7 +845,8 @@ public class ComputerManagerService extends Service {
 
             @Override
             public void onConnected() {
-                Log.i(TAG, "WireGuard tunnel connected, resetting PC state to trigger re-poll");
+                Log.i(TAG, "WireGuard tunnel connected, configuring HTTP JNI and resetting PC state");
+                configureWireGuardHttp();
                 synchronized (pollingTuples) {
                     for (PollingTuple tuple : pollingTuples) {
                         tuple.computer.state = ComputerDetails.State.UNKNOWN;
@@ -792,7 +859,8 @@ public class ComputerManagerService extends Service {
 
             @Override
             public void onDisconnected() {
-                Log.i(TAG, "WireGuard tunnel disconnected, resetting PC state to trigger re-poll");
+                Log.i(TAG, "WireGuard tunnel disconnected, disabling HTTP JNI and resetting PC state");
+                teardownWireGuardHttp();
                 synchronized (pollingTuples) {
                     for (PollingTuple tuple : pollingTuples) {
                         tuple.computer.state = ComputerDetails.State.UNKNOWN;
@@ -851,6 +919,9 @@ public class ComputerManagerService extends Service {
     public void onDestroy() {
         ConnectivityManager connMgr = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
         connMgr.unregisterNetworkCallback(networkCallback);
+
+        // Clean up WireGuard HTTP JNI if we started it
+        teardownWireGuardHttp();
 
         // Clear the WireGuard status callback to avoid leaking this service
         WireGuardManager.setStatusCallback(null);

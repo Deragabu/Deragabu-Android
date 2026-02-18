@@ -297,6 +297,48 @@ public class WireGuardManager {
         return nativeCreateUdpProxy(targetHost, targetPort);
     }
 
+    // ========================================================================
+    // TCP Proxy through WireGuard (for HTTPS traffic)
+    // ========================================================================
+
+    /**
+     * Create a TCP proxy for a specific target port through the WireGuard tunnel.
+     * This allows HTTPS traffic to be tunneled: Java handles TLS, Rust handles transport.
+     * Requires WireGuard HTTP config to be set first via configureHttp().
+     *
+     * @param targetPort The target port on the server to proxy to
+     * @return Local port to connect to (>0) on success, -1 on error
+     */
+    public static int createTcpProxy(int targetPort) {
+        if (!httpConfigured) {
+            Log.e(TAG, "Cannot create TCP proxy: WireGuard HTTP not configured");
+            return -1;
+        }
+
+        int localPort = nativeHttpCreateTcpProxy(targetPort);
+        if (localPort > 0) {
+            Log.i(TAG, "TCP proxy created: 127.0.0.1:" + localPort + " -> server:" + targetPort);
+        }
+        return localPort;
+    }
+
+    /**
+     * Stop all TCP proxies created through WireGuard HTTP config
+     */
+    public static void stopTcpProxies() {
+        nativeHttpStopTcpProxies();
+        Log.i(TAG, "All TCP proxies stopped");
+    }
+
+    /**
+     * Get the local port for a TCP proxy targeting a specific port
+     * @param targetPort The target port
+     * @return Local proxy port, or -1 if no proxy exists
+     */
+    public static int getTcpProxyPort(int targetPort) {
+        return nativeHttpGetProxyPort(targetPort);
+    }
+
     // Native methods implemented in Rust
     private static native boolean nativeStartTunnel(
         byte[] privateKey,
@@ -313,5 +355,161 @@ public class WireGuardManager {
     private static native byte[] nativeGeneratePrivateKey();
     private static native byte[] nativeDerivePublicKey(byte[] privateKey);
     private static native int nativeCreateUdpProxy(String targetHost, int targetPort);
-}
 
+    // TCP proxy native methods (for HTTPS through WireGuard)
+    private static native int nativeHttpCreateTcpProxy(int targetPort);
+    private static native void nativeHttpStopTcpProxies();
+    private static native int nativeHttpGetProxyPort(int targetPort);
+
+    // ========================================================================
+    // Direct HTTP through WireGuard (bypasses OkHttp)
+    // ========================================================================
+
+    private static volatile boolean httpConfigured = false;
+
+    /**
+     * Configure the WireGuard HTTP client for direct HTTP requests.
+     * This allows making HTTP requests directly through WireGuard without OkHttp.
+     *
+     * @param config The WireGuard configuration
+     * @param serverAddress The server IP address in the tunnel (e.g. "10.0.0.1")
+     * @return true if configuration succeeded
+     */
+    public static boolean configureHttp(Config config, String serverAddress) {
+        String error = config.validate();
+        if (error != null) {
+            Log.e(TAG, "Invalid configuration for HTTP: " + error);
+            return false;
+        }
+
+        try {
+            // Parse endpoint
+            String[] parts = config.endpoint.split(":");
+            String host = parts[0];
+            int port = Integer.parseInt(parts[1]);
+
+            // Resolve hostname
+            java.net.InetAddress addr = java.net.InetAddress.getByName(host);
+            String resolvedEndpoint = addr.getHostAddress() + ":" + port;
+
+            boolean result = nativeHttpSetConfig(
+                config.privateKey,
+                config.peerPublicKey,
+                config.presharedKey,
+                resolvedEndpoint,
+                config.tunnelAddress,
+                serverAddress,
+                config.keepaliveSecs,
+                config.mtu
+            );
+
+            if (result) {
+                httpConfigured = true;
+                Log.i(TAG, "WireGuard HTTP client configured");
+            }
+            return result;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to configure WireGuard HTTP client", e);
+            return false;
+        }
+    }
+
+    /**
+     * Clear the WireGuard HTTP client configuration.
+     */
+    public static void clearHttpConfig() {
+        nativeHttpClearConfig();
+        httpConfigured = false;
+        Log.i(TAG, "WireGuard HTTP client configuration cleared");
+    }
+
+    /**
+     * Check if the WireGuard HTTP client is configured.
+     */
+    public static boolean isHttpConfigured() {
+        return httpConfigured && nativeHttpIsConfigured();
+    }
+
+    /**
+     * Make an HTTP GET request directly through WireGuard.
+     * This bypasses OkHttp entirely for lower latency.
+     *
+     * @param host The target host (used for Host header)
+     * @param port The target port
+     * @param path The request path including query string
+     * @return Response body string, or null on failure
+     */
+    public static String httpGet(String host, int port, String path) {
+        if (!httpConfigured) {
+            Log.e(TAG, "WireGuard HTTP not configured");
+            return null;
+        }
+
+        try {
+            return nativeHttpGet(host, port, path);
+        } catch (Exception e) {
+            Log.e(TAG, "WireGuard HTTP GET failed", e);
+            return null;
+        }
+    }
+
+    /**
+     * Result class for HTTP requests with status code
+     */
+    public static class HttpResult {
+        public final int statusCode;
+        public final String body;
+
+        public HttpResult(int statusCode, String body) {
+            this.statusCode = statusCode;
+            this.body = body;
+        }
+
+        public boolean isSuccess() {
+            return statusCode >= 200 && statusCode < 300;
+        }
+    }
+
+    /**
+     * Make an HTTP GET request with status code.
+     *
+     * @param host The target host
+     * @param port The target port
+     * @param path The request path
+     * @return HttpResult with status code and body, or null on failure
+     */
+    public static HttpResult httpGetWithStatus(String host, int port, String path) {
+        if (!httpConfigured) {
+            Log.e(TAG, "WireGuard HTTP not configured");
+            return null;
+        }
+
+        try {
+            String[] bodyArray = new String[1];
+            int statusCode = nativeHttpGetWithStatus(host, port, path, bodyArray);
+            if (statusCode < 0) {
+                return null;
+            }
+            return new HttpResult(statusCode, bodyArray[0]);
+        } catch (Exception e) {
+            Log.e(TAG, "WireGuard HTTP GET with status failed", e);
+            return null;
+        }
+    }
+
+    // Direct HTTP native methods
+    private static native boolean nativeHttpSetConfig(
+        byte[] privateKey,
+        byte[] peerPublicKey,
+        byte[] presharedKey,
+        String endpoint,
+        String tunnelAddress,
+        String serverAddress,
+        int keepaliveSecs,
+        int mtu
+    );
+    private static native void nativeHttpClearConfig();
+    private static native boolean nativeHttpIsConfigured();
+    private static native String nativeHttpGet(String host, int port, String path);
+    private static native int nativeHttpGetWithStatus(String host, int port, String path, String[] resultBody);
+}

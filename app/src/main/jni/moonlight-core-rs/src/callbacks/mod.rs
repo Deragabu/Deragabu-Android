@@ -4,6 +4,7 @@
 //! and connection events that bridge between moonlight-common-c and the JNI layer.
 
 #![allow(dead_code)]
+#![allow(unused_imports)]
 
 mod video;
 mod audio;

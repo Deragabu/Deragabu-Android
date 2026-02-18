@@ -502,6 +502,52 @@ public class MoonBridge {
     public static native int wgCreateUdpProxy(String targetAddr, int targetPort);
 
     /**
+     * Create streaming UDP proxies for all moonlight ports (video, control, audio).
+     * These proxies bind to the same ports locally (47998, 47999, 48000) for transparent forwarding.
+     * After calling this, use 127.0.0.1 as the server address.
+     *
+     * @param targetAddr The WireGuard server IP address (e.g., "10.0.0.1")
+     * @param basePort   The base port for streaming (typically 47998)
+     * @return true on success, false on failure
+     */
+    public static native boolean wgCreateStreamingProxies(String targetAddr, int basePort);
+
+    /**
+     * Create a TCP proxy through WireGuard for native streaming (RTSP/control).
+     * Each incoming connection gets its own WireGuard tunnel for isolation.
+     *
+     * @param privateKey      32-byte private key
+     * @param peerPublicKey   32-byte peer public key
+     * @param presharedKey    32-byte preshared key (can be null)
+     * @param endpoint        WireGuard endpoint as "host:port"
+     * @param tunnelAddress   Local tunnel IP (e.g., "10.0.0.2")
+     * @param targetAddress   Target address to connect to (e.g., "10.0.0.1")
+     * @param targetPort      Target port
+     * @param keepaliveSecs   Keepalive interval
+     * @param mtu             MTU size
+     * @return Local proxy port (>0) on success, -1 on failure
+     */
+    public static native int wgCreateTcpProxy(byte[] privateKey, byte[] peerPublicKey,
+                                              byte[] presharedKey, String endpoint,
+                                              String tunnelAddress, String targetAddress,
+                                              int targetPort, int keepaliveSecs, int mtu);
+
+    /**
+     * Stop the TCP proxy.
+     */
+    public static native void wgStopTcpProxy();
+
+    /**
+     * Check if TCP proxy is running.
+     */
+    public static native boolean wgIsTcpProxyRunning();
+
+    /**
+     * Get TCP proxy port.
+     */
+    public static native int wgGetTcpProxyPort();
+
+    /**
      * Parse a base64-encoded WireGuard key into raw 32 bytes.
      *
      * @param base64Key Base64-encoded WireGuard key

@@ -12,7 +12,6 @@ import java.io.Reader;
 import java.io.StringReader;
 import java.net.Inet4Address;
 import java.net.InetAddress;
-import java.net.Proxy;
 import java.net.Socket;
 import java.security.KeyManagementException;
 import java.security.KeyStore;
@@ -47,6 +46,7 @@ import org.xmlpull.v1.XmlPullParserException;
 import org.xmlpull.v1.XmlPullParserFactory;
 
 import com.limelight.BuildConfig;
+import com.limelight.binding.video.WireGuardManager;
 import com.limelight.nvstream.ConnectionContext;
 import com.limelight.nvstream.http.PairingManager.PairState;
 import com.limelight.nvstream.jni.MoonBridge;
@@ -69,6 +69,32 @@ public class NvHTTP {
     public static final int SHORT_CONNECTION_TIMEOUT = 3000;
     public static final int LONG_CONNECTION_TIMEOUT = 5000;
     public static final int READ_TIMEOUT = 7000;
+
+    // Use direct WireGuard HTTP (bypasses OkHttp entirely for HTTP,
+    // uses TCP proxy through WireGuard for HTTPS)
+    private static volatile boolean useDirectWgHttp = false;
+
+    /**
+     * Enable or disable direct WireGuard HTTP.
+     * When enabled, HTTP requests bypass OkHttp and go directly through JNI.
+     * HTTPS requests are routed through a TCP proxy over WireGuard.
+     * WireGuard HTTP must be configured via WireGuardManager.configureHttp() first.
+     *
+     * @param enabled true to enable direct WireGuard HTTP
+     */
+    public static void setUseDirectWgHttp(boolean enabled) {
+        useDirectWgHttp = enabled;
+        Log.i(TAG, "Direct WireGuard HTTP " + (enabled ? "enabled" : "disabled"));
+    }
+
+    /**
+     * Check if direct WireGuard HTTP is enabled and configured.
+     *
+     * @return true if direct WireGuard HTTP is ready to use
+     */
+    public static boolean isDirectWgHttpEnabled() {
+        return useDirectWgHttp && WireGuardManager.isHttpConfigured();
+    }
 
     // Print URL and content to logcat on debug builds
 
@@ -189,7 +215,6 @@ public class NvHTTP {
                 .hostnameVerifier(hv)
                 .readTimeout(READ_TIMEOUT, TimeUnit.MILLISECONDS)
                 .connectTimeout(LONG_CONNECTION_TIMEOUT, TimeUnit.MILLISECONDS)
-                .proxy(Proxy.NO_PROXY)
                 .build();
 
         httpClientShortConnectTimeout = httpClientLongConnectTimeout.newBuilder()
@@ -474,6 +499,16 @@ public class NvHTTP {
     }
 
     private String openHttpConnectionToString(OkHttpClient client, HttpUrl baseUrl, String path, String query) throws IOException {
+        // Use direct WireGuard HTTP if enabled (bypasses OkHttp for HTTP)
+        if (isDirectWgHttpEnabled() && baseUrl.scheme().equals("http")) {
+            return openWgHttpConnectionToString(baseUrl, path, query);
+        }
+
+        // Use TCP proxy through WireGuard for HTTPS
+        if (isDirectWgHttpEnabled() && baseUrl.scheme().equals("https")) {
+            return openWgHttpsConnectionToString(client, baseUrl, path, query);
+        }
+
         try {
             ResponseBody resp = openHttpConnection(client, baseUrl, path, query);
             String respString = resp.string();
@@ -484,6 +519,68 @@ public class NvHTTP {
             return respString;
         } catch (IOException e) {
             Log.e(TAG, "openHttpConnectionToString: " + e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    /**
+     * Make an HTTP request directly through WireGuard JNI (bypasses OkHttp).
+     * This provides lower latency for API requests when using the built-in WireGuard tunnel.
+     */
+    private String openWgHttpConnectionToString(HttpUrl baseUrl, String path, String query) throws IOException {
+        HttpUrl completeUrl = getCompleteUrl(baseUrl, path, query);
+        String fullPath = completeUrl.encodedPath();
+        if (completeUrl.encodedQuery() != null) {
+            fullPath += "?" + completeUrl.encodedQuery();
+        }
+
+        Log.i(TAG, "WireGuard HTTP GET: " + completeUrl);
+
+        String response = WireGuardManager.httpGet(baseUrl.host(), baseUrl.port(), fullPath);
+        if (response == null) {
+            throw new IOException("WireGuard HTTP request failed");
+        }
+
+        Log.i(TAG, "WireGuard HTTP response: " + response);
+        return response;
+    }
+
+    /**
+     * Make an HTTPS request through a TCP proxy over WireGuard.
+     * The TCP transport goes through WireGuard (via JNI), while TLS is handled by OkHttp.
+     * This allows client certificate authentication to work while routing through WireGuard.
+     */
+    private String openWgHttpsConnectionToString(OkHttpClient client, HttpUrl baseUrl, String path, String query) throws IOException {
+        int targetPort = baseUrl.port();
+
+        // Create or get TCP proxy for this HTTPS port
+        int localProxyPort = WireGuardManager.getTcpProxyPort(targetPort);
+        if (localProxyPort <= 0) {
+            localProxyPort = WireGuardManager.createTcpProxy(targetPort);
+            if (localProxyPort <= 0) {
+                throw new IOException("Failed to create TCP proxy for HTTPS port " + targetPort);
+            }
+        }
+
+        // Build URL pointing to the local TCP proxy (TLS handshake happens through the tunnel)
+        HttpUrl proxyBaseUrl = baseUrl.newBuilder()
+                .host("127.0.0.1")
+                .port(localProxyPort)
+                .build();
+
+        HttpUrl completeUrl = getCompleteUrl(proxyBaseUrl, path, query);
+        Log.i(TAG, "WireGuard HTTPS via TCP proxy: " + getCompleteUrl(baseUrl, path, query)
+                + " -> " + completeUrl);
+
+        try {
+            ResponseBody resp = openHttpConnection(client, proxyBaseUrl, path, query);
+            String respString = resp.string();
+            resp.close();
+
+            Log.i(TAG, "WireGuard HTTPS response: " + respString);
+            return respString;
+        } catch (IOException e) {
+            Log.e(TAG, "WireGuard HTTPS request failed: " + e.getMessage(), e);
             throw e;
         }
     }
