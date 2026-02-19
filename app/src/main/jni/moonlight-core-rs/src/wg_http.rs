@@ -148,19 +148,40 @@ fn create_tunnel(config: &WgHttpConfig) -> io::Result<(Box<Tunn>, UdpSocket, Soc
 fn do_handshake(tunnel: &mut Tunn, socket: &UdpSocket) -> io::Result<()> {
     let mut buf = vec![0u8; MAX_PACKET_SIZE];
 
-    // Initiate handshake
-    match tunnel.format_handshake_initiation(&mut buf, false) {
-        TunnResult::WriteToNetwork(data) => {
-            socket.send(data)?;
-        }
-        TunnResult::Err(e) => {
-            return Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Handshake init failed: {:?}", e),
-            ));
-        }
-        _ => {
-            warn!("WG handshake: unexpected result from format_handshake_initiation");
+    // Initiate handshake with retry for connection refused
+    let mut init_retries = 0;
+    const MAX_INIT_RETRIES: i32 = 3;
+    
+    loop {
+        match tunnel.format_handshake_initiation(&mut buf, false) {
+            TunnResult::WriteToNetwork(data) => {
+                match socket.send(data) {
+                    Ok(_) => break,
+                    Err(ref e) if e.kind() == io::ErrorKind::ConnectionRefused => {
+                        init_retries += 1;
+                        if init_retries >= MAX_INIT_RETRIES {
+                            return Err(io::Error::new(
+                                io::ErrorKind::ConnectionRefused,
+                                "WireGuard endpoint not reachable (connection refused after retries)",
+                            ));
+                        }
+                        warn!("WG handshake init: connection refused, retry {}/{}", init_retries, MAX_INIT_RETRIES);
+                        std::thread::sleep(Duration::from_millis(500));
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            TunnResult::Err(e) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Handshake init failed: {:?}", e),
+                ));
+            }
+            _ => {
+                warn!("WG handshake: unexpected result from format_handshake_initiation");
+                break;
+            }
         }
     }
 
@@ -175,12 +196,16 @@ fn do_handshake(tunnel: &mut Tunn, socket: &UdpSocket) -> io::Result<()> {
             Ok(n) => {
                 match tunnel.decapsulate(None, &recv_buf[..n], &mut dec_buf) {
                     TunnResult::WriteToNetwork(data) => {
-                        socket.send(data)?;
+                        // Send handshake response - ignore transient errors, retry will handle it
+                        if let Err(e) = socket.send(data) {
+                            warn!("WG handshake: send response failed: {}, will retry", e);
+                            continue;
+                        }
                         // Process any follow-up results to complete tunnel setup
                         loop {
                             match tunnel.decapsulate(None, &[], &mut dec_buf) {
                                 TunnResult::WriteToNetwork(data) => {
-                                    socket.send(data)?;
+                                    socket.send(data).ok();
                                 }
                                 _ => break,
                             }
@@ -207,15 +232,33 @@ fn do_handshake(tunnel: &mut Tunn, socket: &UdpSocket) -> io::Result<()> {
                 if e.kind() == io::ErrorKind::WouldBlock
                     || e.kind() == io::ErrorKind::TimedOut =>
             {
+                // Timeout waiting for response - retry handshake initiation
                 match tunnel.format_handshake_initiation(&mut buf, false) {
                     TunnResult::WriteToNetwork(data) => {
-                        socket.send(data)?;
+                        socket.send(data).ok(); // Ignore send errors, retry will handle it
                     }
                     _ => {}
                 }
             }
             Err(ref e) if e.kind() == io::ErrorKind::Interrupted => {
                 // EINTR - interrupted by signal, just retry
+                continue;
+            }
+            Err(ref e) if e.kind() == io::ErrorKind::ConnectionRefused => {
+                // ECONNREFUSED - ICMP port unreachable received
+                // This can happen if:
+                // 1. The WireGuard server is not listening on the port
+                // 2. A firewall sent an ICMP rejection
+                // Retry by re-sending the handshake initiation
+                warn!("WG handshake: connection refused (ICMP port unreachable), retrying...");
+                match tunnel.format_handshake_initiation(&mut buf, false) {
+                    TunnResult::WriteToNetwork(data) => {
+                        socket.send(data).ok();
+                    }
+                    _ => {}
+                }
+                // Small delay before retry to avoid hammering
+                std::thread::sleep(Duration::from_millis(500));
                 continue;
             }
             Err(e) => return Err(e),
@@ -529,10 +572,12 @@ impl SharedTcpProxy {
                 Err(ref e)
                     if e.kind() == io::ErrorKind::WouldBlock
                         || e.kind() == io::ErrorKind::TimedOut
-                        || e.kind() == io::ErrorKind::Interrupted =>
+                        || e.kind() == io::ErrorKind::Interrupted
+                        || e.kind() == io::ErrorKind::ConnectionRefused =>
                 {
                     // WouldBlock/TimedOut: no data, check retransmissions and flush
                     // Interrupted (EINTR): interrupted by signal, retry
+                    // ConnectionRefused: ICMP port unreachable, retry (server may be restarting)
                     proxy.virtual_stack.check_retransmissions();
                     proxy.flush_outgoing();
                 }

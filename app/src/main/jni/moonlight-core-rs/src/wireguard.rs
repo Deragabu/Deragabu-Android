@@ -273,7 +273,9 @@ impl WireGuardTunnel {
                 Ok(n) => n,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock 
                     || e.kind() == io::ErrorKind::TimedOut 
-                    || e.kind() == io::ErrorKind::Interrupted => {
+                    || e.kind() == io::ErrorKind::Interrupted
+                    || e.kind() == io::ErrorKind::ConnectionRefused => {
+                    // ConnectionRefused on UDP = ICMP port unreachable, just retry
                     continue;
                 }
                 Err(e) => {
@@ -335,12 +337,12 @@ impl WireGuardTunnel {
                         let protocol = data[9];
                         if protocol == 6 {
                             // TCP packet - forward to HTTP shared proxy's virtual stack
-                            debug!("WG TCP received: {} bytes, injecting to HTTP proxy", data.len());
+                            //debug!("WG TCP received: {} bytes, injecting to HTTP proxy", data.len());
                             crate::wg_http::wg_http_inject_packet(data);
                         } else if protocol == 17 {
                             // UDP packet - deliver via zero-copy channel
                             if let Some((src_port, dst_port, payload)) = parse_udp_from_ip_packet(data) {
-                                debug!("WG UDP received: src_port={}, dst_port={}, payload_len={}", src_port, dst_port, payload.len());
+                                //debug!("WG UDP received: src_port={}, dst_port={}, payload_len={}", src_port, dst_port, payload.len());
                                 // Try zero-copy delivery via platform_sockets channel
                                 if crate::platform_sockets::try_push_udp_data(src_port, payload) {
                                     debug!("WG UDP: delivered via zero-copy channel (src_port={})", src_port);
