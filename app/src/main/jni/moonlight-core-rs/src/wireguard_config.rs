@@ -3,8 +3,18 @@
 //! This module contains the configuration structures and utilities for WireGuard tunnels.
 //! Separated from the main wireguard module for better modularity and reusability.
 
-use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::io;
+use log::info;
+
+/// Return the unspecified bind address matching the address family of `addr`.
+/// IPv4 endpoints bind to `0.0.0.0:0`, IPv6 endpoints bind to `[::]:0`.
+fn bind_addr_for(addr: &SocketAddr) -> &'static str {
+    match addr {
+        SocketAddr::V4(_) => "0.0.0.0:0",
+        SocketAddr::V6(_) => "[::]:0",
+    }
+}
 
 /// Configuration for the WireGuard tunnel
 #[derive(Clone, Debug)]
@@ -80,19 +90,52 @@ impl WireGuardConfig {
         ))
     }
 
-    /// Resolve the endpoint string to a SocketAddr.
+    /// Resolve the endpoint string to all SocketAddrs.
     /// This performs DNS resolution if the endpoint contains a hostname.
-    pub fn resolve_endpoint(&self) -> io::Result<SocketAddr> {
-        self.endpoint.to_socket_addrs()
+    /// Returns addresses with IPv6 first (preferred).
+    pub fn resolve_endpoint_all(&self) -> io::Result<Vec<SocketAddr>> {
+        let mut addrs: Vec<SocketAddr> = self.endpoint.to_socket_addrs()
             .map_err(|e| io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("Failed to resolve endpoint '{}': {}", self.endpoint, e)
             ))?
-            .next()
-            .ok_or_else(|| io::Error::new(
+            .collect();
+
+        if addrs.is_empty() {
+            return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("DNS resolution returned no addresses for '{}'", self.endpoint)
-            ))
+            ));
+        }
+
+        // Sort addresses: IPv6 first, then IPv4
+        addrs.sort_by_key(|addr| match addr {
+            SocketAddr::V6(_) => 0,
+            SocketAddr::V4(_) => 1,
+        });
+
+        Ok(addrs)
+    }
+
+    /// Resolve the endpoint string to a SocketAddr.
+    /// This performs DNS resolution if the endpoint contains a hostname.
+    /// Tries all resolved addresses and returns the first one that the OS can bind a socket for
+    /// (handles cases where IPv6 is not supported on the device).
+    pub fn resolve_endpoint(&self) -> io::Result<SocketAddr> {
+        let addrs = self.resolve_endpoint_all()?;
+
+        // Try each resolved address: pick the first one where we can actually bind a socket
+        for addr in &addrs {
+            match UdpSocket::bind(bind_addr_for(addr)) {
+                Ok(_) => return Ok(*addr),
+                Err(e) => {
+                    info!("Skipping resolved address {} for '{}': {}", addr, self.endpoint, e);
+                }
+            }
+        }
+
+        // Fallback: return the first address even though binding failed (caller will get the error)
+        Ok(addrs[0])
     }
 
     /// Set the preshared key from raw bytes.

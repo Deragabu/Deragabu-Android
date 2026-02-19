@@ -39,24 +39,65 @@ pub struct WgHttpConfig {
     pub mtu: u16,
 }
 
-/// Resolve endpoint string to SocketAddr (supports both IP:port and hostname:port)
-fn resolve_endpoint(endpoint: &str) -> io::Result<SocketAddr> {
+/// Resolve endpoint string to a list of SocketAddrs (supports both IP:port and hostname:port).
+/// Returns all resolved addresses with IPv6 addresses first (preferred).
+fn resolve_endpoint_all(endpoint: &str) -> io::Result<Vec<SocketAddr>> {
     use std::net::ToSocketAddrs;
 
-    endpoint.to_socket_addrs()
+    let mut addrs: Vec<SocketAddr> = endpoint.to_socket_addrs()
         .map_err(|e| io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("Failed to resolve endpoint '{}': {}", endpoint, e)
         ))?
-        .next()
-        .ok_or_else(|| io::Error::new(
+        .collect();
+
+    if addrs.is_empty() {
+        return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("DNS resolution returned no addresses for '{}'", endpoint)
-        ))
+        ));
+    }
+
+    // Sort addresses: IPv6 first, then IPv4
+    addrs.sort_by_key(|addr| match addr {
+        SocketAddr::V6(_) => 0,
+        SocketAddr::V4(_) => 1,
+    });
+
+    Ok(addrs)
 }
 
-/// Create a WireGuard tunnel
-fn create_tunnel(config: &WgHttpConfig) -> io::Result<(Box<Tunn>, UdpSocket)> {
+/// Resolve endpoint string to a single SocketAddr, preferring addresses whose
+/// address family is supported by the OS (tries to bind a UDP socket to verify).
+fn resolve_endpoint(endpoint: &str) -> io::Result<SocketAddr> {
+    let addrs = resolve_endpoint_all(endpoint)?;
+
+    // Try each resolved address: pick the first one where we can actually bind a socket
+    for addr in &addrs {
+        match UdpSocket::bind(bind_addr_for(addr)) {
+            Ok(_) => return Ok(*addr),
+            Err(e) => {
+                info!("Skipping resolved address {} for '{}': {}", addr, endpoint, e);
+            }
+        }
+    }
+
+    // Fallback: return the first address even though binding failed (caller will get the error)
+    Ok(addrs[0])
+}
+
+/// Return the unspecified bind address matching the address family of `addr`.
+fn bind_addr_for(addr: &SocketAddr) -> &'static str {
+    match addr {
+        SocketAddr::V4(_) => "0.0.0.0:0",
+        SocketAddr::V6(_) => "[::]:0",
+    }
+}
+
+/// Create a WireGuard tunnel.
+/// Tries all resolved addresses for the endpoint, falling back to the next
+/// address if binding/connecting fails (e.g. IPv6 not supported on device).
+fn create_tunnel(config: &WgHttpConfig) -> io::Result<(Box<Tunn>, UdpSocket, SocketAddr)> {
     let private_key = StaticSecret::from(config.private_key);
     let peer_public_key = PublicKey::from(config.peer_public_key);
 
@@ -70,14 +111,37 @@ fn create_tunnel(config: &WgHttpConfig) -> io::Result<(Box<Tunn>, UdpSocket)> {
     )
     .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Tunn::new failed: {}", e)))?;
 
-    // Resolve endpoint dynamically for DDNS support
-    let endpoint_addr = resolve_endpoint(&config.endpoint)?;
-    info!("Resolved endpoint '{}' -> {}", config.endpoint, endpoint_addr);
+    // Resolve endpoint dynamically for DDNS support - get all addresses
+    let addrs = resolve_endpoint_all(&config.endpoint)?;
+    info!("Resolved endpoint '{}' -> {:?}", config.endpoint, addrs);
 
-    let endpoint_socket = UdpSocket::bind("0.0.0.0:0")?;
-    endpoint_socket.connect(endpoint_addr)?;
+    // Try each resolved address until one works
+    let mut last_err = None;
+    for addr in &addrs {
+        match UdpSocket::bind(bind_addr_for(addr)) {
+            Ok(socket) => {
+                match socket.connect(addr) {
+                    Ok(()) => {
+                        info!("Connected to endpoint {} (from {} candidates)", addr, addrs.len());
+                        return Ok((tunnel, socket, *addr));
+                    }
+                    Err(e) => {
+                        info!("Failed to connect to {}: {}, trying next", addr, e);
+                        last_err = Some(e);
+                    }
+                }
+            }
+            Err(e) => {
+                info!("Failed to bind for {}: {}, trying next", addr, e);
+                last_err = Some(e);
+            }
+        }
+    }
 
-    Ok((tunnel, endpoint_socket))
+    Err(last_err.unwrap_or_else(|| io::Error::new(
+        io::ErrorKind::AddrNotAvailable,
+        format!("Could not connect to any resolved address for '{}'", config.endpoint)
+    )))
 }
 
 /// Perform WireGuard handshake with proper continuation and logging
@@ -259,21 +323,34 @@ impl SharedTcpProxy {
     /// packets will be routed through the streaming tunnel instead.
     fn new(config: &WgHttpConfig) -> io::Result<Arc<Self>> {
         let streaming_active = crate::wireguard::wg_is_tunnel_active();
-        
-        // Resolve endpoint for initial connection
-        let endpoint_addr = resolve_endpoint(&config.endpoint)?;
-        info!("Initial endpoint resolution: '{}' -> {}", config.endpoint, endpoint_addr);
 
         // Only create our own tunnel if streaming is not active
-        let (tunnel, endpoint_socket) = if streaming_active {
+        let (tunnel, endpoint_socket, endpoint_addr) = if streaming_active {
             info!("Streaming tunnel active - HTTP proxy will route through it");
-            // Create a dummy tunnel and socket that won't be used
-            // We still need them for SharedTcpProxy struct, but I/O will go through streaming
-            let (tun, sock) = create_tunnel(config)?;
-            // Don't do handshake - streaming tunnel is already handling WG session
-            (tun, sock)
+            // When routing through the streaming tunnel, we don't need a real
+            // endpoint socket.  Create a minimal boringtun Tunn (pure crypto,
+            // no network I/O) and a dummy loopback socket to satisfy the struct.
+            let private_key = StaticSecret::from(config.private_key);
+            let peer_public_key = PublicKey::from(config.peer_public_key);
+            let tun = Tunn::new(
+                private_key,
+                peer_public_key,
+                config.preshared_key,
+                Some(config.keepalive_secs),
+                0,
+                None,
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Tunn::new failed: {}", e)))?;
+
+            // Dummy socket — will never be used for real I/O
+            let dummy_socket = UdpSocket::bind("127.0.0.1:0")?;
+            let dummy_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+            (tun, dummy_socket, dummy_addr)
         } else {
-            let (mut tun, sock) = create_tunnel(config)?;
+            // Create tunnel with handshake (create_tunnel handles endpoint resolution internally)
+            let (mut tun, sock, endpoint_addr) = create_tunnel(config)?;
+            info!("Initial endpoint resolution: '{}' -> {}", config.endpoint, endpoint_addr);
+
             // Perform handshake before wrapping in Mutex
             do_handshake(&mut tun, &sock)?;
             info!("Shared WG tunnel handshake completed");
@@ -288,7 +365,7 @@ impl SharedTcpProxy {
                     _ => {}
                 }
             }
-            (tun, sock)
+            (tun, sock, endpoint_addr)
         };
 
         let proxy = Arc::new(SharedTcpProxy {
@@ -467,8 +544,8 @@ impl SharedTcpProxy {
             info!("DDNS re-resolution: endpoint '{}' changed {} -> {}",
                   self.config.endpoint, *current_addr, new_addr);
 
-            // Create new socket and connect to new address
-            let new_socket = UdpSocket::bind("0.0.0.0:0")?;
+            // Create new socket and connect to new address (address family must match)
+            let new_socket = UdpSocket::bind(bind_addr_for(&new_addr))?;
             new_socket.connect(new_addr)?;
             new_socket.set_read_timeout(Some(Duration::from_millis(100)))?;
 
