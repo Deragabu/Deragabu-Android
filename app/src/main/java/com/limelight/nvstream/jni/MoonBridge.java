@@ -468,14 +468,13 @@ public class MoonBridge {
      * @param endpointAddr   WireGuard peer endpoint IP address string
      * @param endpointPort   WireGuard peer endpoint port
      * @param tunnelAddr     Local tunnel IP address (e.g. "10.0.0.2")
-     * @param keepaliveSecs  Persistent keepalive interval in seconds (0 to disable)
      * @param mtu            Tunnel MTU (typically 1420)
      * @return 0 on success, negative error code on failure
      */
     public static native int wgStartTunnel(byte[] privateKey, byte[] peerPublicKey,
                                            byte[] presharedKey, String endpointAddr,
                                            int endpointPort, String tunnelAddr,
-                                           int keepaliveSecs, int mtu);
+                                           int mtu);
 
     /**
      * Stop the WireGuard tunnel.

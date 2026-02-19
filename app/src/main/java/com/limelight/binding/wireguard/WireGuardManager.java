@@ -29,11 +29,9 @@ public class WireGuardManager {
         private byte[] presharedKey; // nullable
         private String endpoint;
         private String tunnelAddress;
-        private int keepaliveSecs;
         private int mtu;
 
         public Config() {
-            this.keepaliveSecs = 25;
             this.mtu = 1420;
             this.tunnelAddress = "10.0.0.2";
         }
@@ -80,11 +78,6 @@ public class WireGuardManager {
             return this;
         }
 
-        public Config setKeepaliveSecs(int keepaliveSecs) {
-            this.keepaliveSecs = keepaliveSecs;
-            return this;
-        }
-
         public Config setMtu(int mtu) {
             this.mtu = mtu;
             return this;
@@ -95,7 +88,6 @@ public class WireGuardManager {
         public byte[] getPresharedKey() { return presharedKey; }
         public String getEndpoint() { return endpoint; }
         public String getTunnelAddress() { return tunnelAddress; }
-        public int getKeepaliveSecs() { return keepaliveSecs; }
         public int getMtu() { return mtu; }
 
         /**
@@ -174,7 +166,6 @@ public class WireGuardManager {
                 config.presharedKey,
                 config.endpoint,
                 config.tunnelAddress,
-                config.keepaliveSecs,
                 config.mtu
             );
 
@@ -281,7 +272,6 @@ public class WireGuardManager {
         byte[] presharedKey,
         String endpoint,
         String tunnelAddress,
-        int keepaliveSecs,
         int mtu
     );
 
@@ -344,7 +334,6 @@ public class WireGuardManager {
                 config.endpoint,
                 config.tunnelAddress,
                 serverAddress,
-                config.keepaliveSecs,
                 config.mtu
             );
 
@@ -386,7 +375,6 @@ public class WireGuardManager {
         String endpoint,
         String tunnelAddress,
         String serverAddress,
-        int keepaliveSecs,
         int mtu
     );
     private static native void nativeHttpClearConfig();

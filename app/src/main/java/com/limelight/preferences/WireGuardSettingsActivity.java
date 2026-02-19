@@ -45,7 +45,6 @@ public class WireGuardSettingsActivity extends AppCompatActivity {
     private static final String PREF_PEER_ENDPOINT = "wg_peer_endpoint";
     private static final String PREF_PRESHARED_KEY = "wg_preshared_key";
     private static final String PREF_MTU = "wg_mtu";
-    private static final String PREF_KEEPALIVE = "wg_keepalive";
 
     // UI elements
     private SwitchMaterial switchEnabled;
@@ -59,7 +58,6 @@ public class WireGuardSettingsActivity extends AppCompatActivity {
     private TextInputEditText editPeerEndpoint;
     private TextInputEditText editPresharedKey;
     private TextInputEditText editMtu;
-    private TextInputEditText editKeepalive;
     private TextInputLayout layoutPublicKey;
     private Button btnGenerateKeys;
     private Button btnImport;
@@ -115,7 +113,6 @@ public class WireGuardSettingsActivity extends AppCompatActivity {
         editPeerEndpoint = findViewById(R.id.edit_peer_endpoint);
         editPresharedKey = findViewById(R.id.edit_preshared_key);
         editMtu = findViewById(R.id.edit_mtu);
-        editKeepalive = findViewById(R.id.edit_keepalive);
         layoutPublicKey = findViewById(R.id.layout_public_key);
         btnGenerateKeys = findViewById(R.id.btn_generate_keys);
         btnImport = findViewById(R.id.btn_import_config);
@@ -131,7 +128,6 @@ public class WireGuardSettingsActivity extends AppCompatActivity {
         editPeerEndpoint.setText(prefs.getString(PREF_PEER_ENDPOINT, ""));
         editPresharedKey.setText(prefs.getString(PREF_PRESHARED_KEY, ""));
         editMtu.setText(String.valueOf(prefs.getInt(PREF_MTU, 1420)));
-        editKeepalive.setText(String.valueOf(prefs.getInt(PREF_KEEPALIVE, 25)));
 
         // Update public key if private key exists
         updatePublicKey();
@@ -293,16 +289,9 @@ public class WireGuardSettingsActivity extends AppCompatActivity {
         String peerEndpoint = editPeerEndpoint.getText() != null ? editPeerEndpoint.getText().toString().trim() : "";
         String presharedKey = editPresharedKey.getText() != null ? editPresharedKey.getText().toString().trim() : "";
         int mtu = 1420;
-        int keepalive = 25;
 
         try {
             mtu = Integer.parseInt(editMtu.getText() != null ? editMtu.getText().toString() : "1420");
-        } catch (NumberFormatException e) {
-            // Use default
-        }
-
-        try {
-            keepalive = Integer.parseInt(editKeepalive.getText() != null ? editKeepalive.getText().toString() : "25");
         } catch (NumberFormatException e) {
             // Use default
         }
@@ -315,7 +304,6 @@ public class WireGuardSettingsActivity extends AppCompatActivity {
             .putString(PREF_PEER_ENDPOINT, peerEndpoint)
             .putString(PREF_PRESHARED_KEY, presharedKey)
             .putInt(PREF_MTU, mtu)
-            .putInt(PREF_KEEPALIVE, keepalive)
             .apply();
 
         Toast.makeText(this, R.string.wireguard_config_saved, Toast.LENGTH_SHORT).show();
@@ -403,14 +391,9 @@ public class WireGuardSettingsActivity extends AppCompatActivity {
         String presharedKey = editPresharedKey.getText() != null ? editPresharedKey.getText().toString().trim() : "";
 
         int mtu = 1420;
-        int keepalive = 25;
 
         try {
             mtu = Integer.parseInt(editMtu.getText() != null ? editMtu.getText().toString() : "1420");
-        } catch (NumberFormatException ignored) {}
-
-        try {
-            keepalive = Integer.parseInt(editKeepalive.getText() != null ? editKeepalive.getText().toString() : "25");
         } catch (NumberFormatException ignored) {}
 
         return new WireGuardManager.Config()
@@ -419,8 +402,7 @@ public class WireGuardSettingsActivity extends AppCompatActivity {
             .setPresharedKeyBase64(presharedKey.isEmpty() ? null : presharedKey)
             .setEndpoint(peerEndpoint)
             .setTunnelAddress(tunnelAddress)
-            .setMtu(mtu)
-            .setKeepaliveSecs(keepalive);
+            .setMtu(mtu);
     }
 
     private void showImportDialog() {
@@ -578,8 +560,7 @@ public class WireGuardSettingsActivity extends AppCompatActivity {
             .setPresharedKeyBase64(prefs.getString(PREF_PRESHARED_KEY, ""))
             .setEndpoint(peerEndpoint)
             .setTunnelAddress(prefs.getString(PREF_TUNNEL_ADDRESS, "10.0.0.2"))
-            .setMtu(prefs.getInt(PREF_MTU, 1420))
-            .setKeepaliveSecs(prefs.getInt(PREF_KEEPALIVE, 25));
+            .setMtu(prefs.getInt(PREF_MTU, 1420));
     }
 
     /**

@@ -476,8 +476,6 @@
     <string name="wireguard_preshared_key">Preshared Key (optional)</string>
     <string name="wireguard_preshared_key_hint">Leave empty if not using PSK</string>
     <string name="wireguard_mtu">MTU</string>
-    <string name="wireguard_keepalive">Persistent Keepalive</string>
-    <string name="wireguard_keepalive_suffix">seconds</string>
     <string name="wireguard_import">Import</string>
     <string name="wireguard_export">Export</string>
     <string name="wireguard_save">Save Configuration</string>

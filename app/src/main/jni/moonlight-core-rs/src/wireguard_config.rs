@@ -29,16 +29,11 @@ pub struct WireGuardConfig {
     pub endpoint: String,
     /// Local tunnel IP address (the virtual IP assigned to this client)
     pub tunnel_address: IpAddr,
-    /// Keepalive interval in seconds (0 = disabled)
-    pub keepalive_secs: u16,
     /// MTU for the tunnel
     pub mtu: u16,
 }
 
 impl WireGuardConfig {
-    /// Default keepalive interval in seconds
-    pub const DEFAULT_KEEPALIVE_SECS: u16 = 25;
-
     /// Default MTU for the tunnel
     pub const DEFAULT_MTU: u16 = 1420;
 
@@ -61,7 +56,6 @@ impl WireGuardConfig {
             preshared_key: None,
             endpoint,
             tunnel_address,
-            keepalive_secs: Self::DEFAULT_KEEPALIVE_SECS,
             mtu: Self::DEFAULT_MTU,
         }
     }
@@ -151,12 +145,6 @@ impl WireGuardConfig {
         Ok(self)
     }
 
-    /// Set the keepalive interval in seconds.
-    pub fn with_keepalive(mut self, secs: u16) -> Self {
-        self.keepalive_secs = secs;
-        self
-    }
-
     /// Set the MTU for the tunnel.
     pub fn with_mtu(mut self, mtu: u16) -> Self {
         self.mtu = mtu;
@@ -199,7 +187,6 @@ impl Default for WireGuardConfig {
             preshared_key: None,
             endpoint: "0.0.0.0:0".to_string(),
             tunnel_address: "10.0.0.2".parse().unwrap(),
-            keepalive_secs: Self::DEFAULT_KEEPALIVE_SECS,
             mtu: Self::DEFAULT_MTU,
         }
     }
@@ -274,10 +261,8 @@ mod tests {
         let tunnel_addr = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
 
         let config = WireGuardConfig::new(private_key, public_key, endpoint, tunnel_addr)
-            .with_keepalive(30)
             .with_mtu(1400);
 
-        assert_eq!(config.keepalive_secs, 30);
         assert_eq!(config.mtu, 1400);
         assert!(config.preshared_key.is_none());
     }

@@ -1074,7 +1074,6 @@ unsafe fn jni_get_byte_array_region(
 ///   endpointAddr: endpoint address string (e.g. "1.2.3.4")
 ///   endpointPort: endpoint port
 ///   tunnelAddr: tunnel IP address string (e.g. "10.0.0.2")
-///   keepaliveSecs: keepalive interval in seconds
 ///   mtu: tunnel MTU
 /// Returns: 0 on success, non-zero on failure
 #[no_mangle]
@@ -1087,7 +1086,6 @@ pub extern "C" fn Java_com_limelight_nvstream_jni_MoonBridge_wgStartTunnel(
     endpoint_addr: JString,
     endpoint_port: JInt,
     tunnel_addr: JString,
-    keepalive_secs: JInt,
     mtu: JInt,
 ) -> JInt {
     info!("wgStartTunnel called, endpoint port: {}", endpoint_port);
@@ -1146,7 +1144,6 @@ pub extern "C" fn Java_com_limelight_nvstream_jni_MoonBridge_wgStartTunnel(
         preshared_key: psk,
         endpoint: endpoint_str,
         tunnel_address: tunnel_ip,
-        keepalive_secs: keepalive_secs as u16,
         mtu: mtu as u16,
     };
 
@@ -1243,7 +1240,6 @@ pub extern "C" fn Java_com_limelight_binding_wireguard_WireGuardManager_nativeSt
     preshared_key: JByteArray,
     endpoint: JString,
     tunnel_address: JString,
-    keepalive_secs: JInt,
     mtu: JInt,
 ) -> JBoolean {
     // Get private key bytes
@@ -1327,7 +1323,6 @@ pub extern "C" fn Java_com_limelight_binding_wireguard_WireGuardManager_nativeSt
         preshared_key: psk_bytes,
         endpoint: endpoint_str,
         tunnel_address: tunnel_ip,
-        keepalive_secs: keepalive_secs as u16,
         mtu: mtu as u16,
     };
 
@@ -1418,7 +1413,6 @@ pub extern "C" fn Java_com_limelight_binding_wireguard_WireGuardManager_nativeDe
 ///   endpoint: WireGuard endpoint as "host:port"
 ///   tunnelAddress: Local tunnel IP (e.g., "10.0.0.2")
 ///   serverAddress: Server IP in the tunnel (e.g., "10.0.0.1")
-///   keepaliveSecs: Keepalive interval
 ///   mtu: MTU size
 /// Returns: true on success, false on failure
 #[no_mangle]
@@ -1431,7 +1425,6 @@ pub extern "C" fn Java_com_limelight_binding_wireguard_WireGuardManager_nativeHt
     endpoint: JString,
     tunnel_address: JString,
     server_address: JString,
-    keepalive_secs: JInt,
     mtu: JInt,
 ) -> JBoolean {
     // Get private key bytes
@@ -1535,7 +1528,6 @@ pub extern "C" fn Java_com_limelight_binding_wireguard_WireGuardManager_nativeHt
         endpoint: endpoint_str,
         tunnel_ip,
         server_ip,
-        keepalive_secs: keepalive_secs as u16,
         mtu: mtu as u16,
     };
 

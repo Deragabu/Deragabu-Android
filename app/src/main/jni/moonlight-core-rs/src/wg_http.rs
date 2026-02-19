@@ -35,7 +35,6 @@ pub struct WgHttpConfig {
     pub endpoint: String,
     pub tunnel_ip: Ipv4Addr,
     pub server_ip: Ipv4Addr,
-    pub keepalive_secs: u16,
     pub mtu: u16,
 }
 
@@ -105,7 +104,7 @@ fn create_tunnel(config: &WgHttpConfig) -> io::Result<(Box<Tunn>, UdpSocket, Soc
         private_key,
         peer_public_key,
         config.preshared_key,
-        Some(config.keepalive_secs),
+        None,
         0,
         None,
     )
@@ -381,7 +380,7 @@ impl SharedTcpProxy {
                 private_key,
                 peer_public_key,
                 config.preshared_key,
-                Some(config.keepalive_secs),
+                None,
                 0,
                 None,
             )
@@ -622,7 +621,7 @@ impl SharedTcpProxy {
         Ok(())
     }
 
-    /// Background thread: WG keepalive, DDNS re-resolution, and stale connection cleanup
+    /// Background thread: DDNS re-resolution, handshake maintenance, and stale connection cleanup
     fn timer_loop(proxy: Arc<SharedTcpProxy>) {
         let mut buf = vec![0u8; 256];
         let mut handshake_buf = vec![0u8; MAX_PACKET_SIZE];
@@ -633,7 +632,7 @@ impl SharedTcpProxy {
             thread::sleep(Duration::from_secs(1));
 
             // Skip WG timer updates when streaming tunnel is active
-            // (streaming tunnel handles keepalives, we just handle connection cleanup)
+            // (streaming tunnel handles its own timers, we just handle connection cleanup)
             if !crate::wireguard::wg_is_tunnel_active() {
                 // Check for DDNS re-resolution (same as WireGuard's reresolve-dns.sh)
                 // If no successful handshake in DDNS_RERESOLVE_TIMEOUT_SECS, re-resolve DNS
@@ -663,7 +662,7 @@ impl SharedTcpProxy {
                     }
                 }
 
-                // Update WG timers (keepalive, etc.)
+                // Update WG timers (handshake, etc.)
                 {
                     let tunnel = proxy.tunnel.lock();
                     let endpoint_socket = proxy.endpoint_socket.lock();

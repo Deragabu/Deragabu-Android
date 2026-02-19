@@ -88,7 +88,7 @@ impl WireGuardTunnel {
             private_key,
             peer_public_key,
             config.preshared_key,
-            Some(config.keepalive_secs),
+            None,
             0, // index
             None, // rate limiter
         )
@@ -150,7 +150,7 @@ impl WireGuardTunnel {
                 Self::endpoint_receiver_loop(state, running);
             })?;
 
-        // Start the timer thread for keepalive and handshake retransmission
+        // Start the timer thread for handshake retransmission and DDNS re-resolution
         let state = self.state.clone();
         let running = self.running.clone();
         let config = self.config.clone();
@@ -296,7 +296,7 @@ impl WireGuardTunnel {
 
             match result {
                 TunnResult::WriteToNetwork(data) => {
-                    // This is typically a handshake response or keepalive
+                    // This is typically a handshake response
                     if let Err(e) = st.endpoint_socket.send(data) {
                         error!("Failed to send WireGuard response: {}", e);
                     }
@@ -356,7 +356,7 @@ impl WireGuardTunnel {
                     }
                 }
                 TunnResult::Done => {
-                    // Keepalive or similar - nothing to forward
+                    // Nothing to forward
                 }
                 TunnResult::Err(e) => {
                     warn!("WireGuard decapsulation error: {:?}", e);
@@ -367,7 +367,7 @@ impl WireGuardTunnel {
         info!("WireGuard endpoint receiver stopped");
     }
 
-    /// Background thread: periodic timer for keepalive, DDNS re-resolution, and handshake maintenance
+    /// Background thread: periodic timer for DDNS re-resolution and handshake maintenance
     fn timer_loop(state: Arc<Mutex<TunnelState>>, running: Arc<AtomicBool>, config: WireGuardConfig) {
         let mut dst_buf = vec![0u8; WG_BUFFER_SIZE];
         let mut handshake_retry_count = 0u32;
