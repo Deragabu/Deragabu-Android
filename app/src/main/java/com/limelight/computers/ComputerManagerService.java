@@ -192,6 +192,11 @@ public class ComputerManagerService extends Service {
             // Set the listener
             ComputerManagerService.this.listener = listener;
 
+            // Reconfigure WireGuard HTTP JNI to ensure a fresh socket
+            // after the app may have been backgrounded
+            teardownWireGuardHttp();
+            configureWireGuardHttp();
+
             // Start mDNS autodiscovery only if enabled in settings
             if (PreferenceConfiguration.isMdnsEnabled(ComputerManagerService.this)) {
                 discoveryBinder.startDiscovery(MDNS_QUERY_PERIOD_MS);
@@ -292,6 +297,23 @@ public class ComputerManagerService extends Service {
                         // from wiping this change out
                         synchronized (tuple.networkLock) {
                             tuple.computer.state = ComputerDetails.State.UNKNOWN;
+                        }
+
+                        // Notify the listener so the UI updates immediately
+                        if (listener != null) {
+                            listener.notifyComputerUpdated(tuple.computer);
+                        }
+
+                        // Interrupt the polling thread to force an immediate re-poll
+                        if (tuple.thread != null) {
+                            tuple.thread.interrupt();
+                            tuple.thread = null;
+                        }
+
+                        // Start a new polling thread immediately
+                        if (pollingActive) {
+                            tuple.thread = createPollingThread(tuple);
+                            tuple.thread.start();
                         }
                     }
                 }

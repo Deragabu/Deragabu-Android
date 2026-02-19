@@ -213,6 +213,10 @@ public class PcView extends FragmentActivity implements AdapterFragmentCallbacks
             @Override
             public void onRefreshClick(ComputerObject computer) {
                 if (managerBinder != null) {
+                    // Update the local UI immediately to show refreshing state
+                    computer.details.state = ComputerDetails.State.UNKNOWN;
+                    pcGridAdapter.notifyDataSetChanged();
+
                     managerBinder.invalidateStateForComputer(computer.details.uuid);
                 }
             }
