@@ -303,6 +303,15 @@ public class WireGuardManager {
     // ========================================================================
 
     private static volatile boolean httpConfigured = false;
+    private static volatile String currentTunnelAddress = null;
+
+    /**
+     * Get the currently configured tunnel address.
+     * @return The tunnel address (e.g. "10.0.0.2"), or null if not configured
+     */
+    public static String getCurrentTunnelAddress() {
+        return currentTunnelAddress;
+    }
 
     /**
      * Configure the WireGuard HTTP client for direct HTTP requests.
@@ -342,7 +351,8 @@ public class WireGuardManager {
 
             if (result) {
                 httpConfigured = true;
-                Log.i(TAG, "WireGuard HTTP client configured");
+                currentTunnelAddress = config.tunnelAddress;
+                Log.i(TAG, "WireGuard HTTP client configured, tunnel address: " + currentTunnelAddress);
             }
             return result;
         } catch (Exception e) {
@@ -357,6 +367,7 @@ public class WireGuardManager {
     public static void clearHttpConfig() {
         nativeHttpClearConfig();
         httpConfigured = false;
+        currentTunnelAddress = null;
         Log.i(TAG, "WireGuard HTTP client configuration cleared");
     }
 

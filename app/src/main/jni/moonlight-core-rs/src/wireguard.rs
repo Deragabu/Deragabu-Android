@@ -6,12 +6,13 @@
 //! Architecture:
 //! - Uses boringtun for WireGuard protocol (Noise handshake, encryption/decryption)
 //! - Creates a real UDP socket to the WireGuard peer endpoint
-//! - Provides UDP proxy sockets that tunnel traffic through WireGuard
-//! - Provides TCP proxy using smoltcp for RTSP/control traffic
+//! - Uses zero-copy channel delivery for UDP traffic (via platform_sockets)
+//! - Uses VirtualStack for TCP traffic (via wg_http)
 //! - All moonlight streaming traffic (video, audio, control) goes through the tunnel
 
 #![allow(unused_mut)]
 #![allow(unused_variables)]
+#![allow(unused_imports)]
 
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
@@ -19,7 +20,6 @@ use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use std::collections::HashMap;
 
 use boringtun::noise::{Tunn, TunnResult};
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -55,36 +55,11 @@ struct TunnelState {
     decode_buf: Vec<u8>,
 }
 
-/// A UDP proxy socket that tunnels traffic through WireGuard.
-/// 
-/// This creates a local UDP socket pair - one end is returned to the caller
-/// (moonlight-common-c), and the other end is managed by the tunnel to
-/// encapsulate/decapsulate WireGuard traffic.
-pub struct WgUdpProxy {
-    /// The local socket that moonlight-common-c will use
-    pub local_socket: UdpSocket,
-    /// The peer address that this proxy forwards to through the tunnel
-    pub target_addr: SocketAddr,
-}
-
 /// The WireGuard tunnel manager
 pub struct WireGuardTunnel {
     config: WireGuardConfig,
     state: Arc<Mutex<TunnelState>>,
     running: Arc<AtomicBool>,
-    /// Map of local proxy port -> target address for UDP proxies
-    udp_proxies: Arc<Mutex<HashMap<u16, UdpProxyEntry>>>,
-}
-
-struct UdpProxyEntry {
-    /// Socket receiving from moonlight-common-c
-    proxy_socket: UdpSocket,
-    /// The target address in the WireGuard network
-    target_addr: SocketAddr,
-    /// The local address moonlight connects to
-    local_addr: SocketAddr,
-    /// The client address that connected to this proxy (for sending responses back)
-    client_addr: Arc<Mutex<Option<SocketAddr>>>,
 }
 
 impl WireGuardTunnel {
@@ -131,7 +106,6 @@ impl WireGuardTunnel {
             config,
             state,
             running,
-            udp_proxies: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -149,15 +123,14 @@ impl WireGuardTunnel {
         self.initiate_handshake()?;
 
         // Start the endpoint receiver thread - reads from the real WireGuard endpoint
-        // and decapsulates packets, forwarding to the appropriate proxy socket
+        // and decapsulates packets, forwarding via zero-copy channels
         let state = self.state.clone();
         let running = self.running.clone();
-        let udp_proxies = self.udp_proxies.clone();
 
         thread::Builder::new()
             .name("wg-endpoint-rx".into())
             .spawn(move || {
-                Self::endpoint_receiver_loop(state, running, udp_proxies);
+                Self::endpoint_receiver_loop(state, running);
             })?;
 
         // Start the timer thread for keepalive and handshake retransmission
@@ -178,10 +151,6 @@ impl WireGuardTunnel {
     pub fn stop(&self) {
         info!("Stopping WireGuard tunnel...");
         self.running.store(false, Ordering::SeqCst);
-
-        // Clear proxies
-        self.udp_proxies.lock().clear();
-
         info!("WireGuard tunnel stopped");
     }
 
@@ -201,134 +170,6 @@ impl WireGuardTunnel {
             thread::sleep(Duration::from_millis(50));
         }
         false
-    }
-
-    /// Create a UDP proxy for tunneling moonlight streaming traffic.
-    /// 
-    /// Returns the local address that moonlight-common-c should connect to,
-    /// which will transparently tunnel traffic through WireGuard to `target_addr`.
-    pub fn create_udp_proxy(&self, target_addr: SocketAddr) -> io::Result<SocketAddr> {
-        // Create a local UDP socket pair for the proxy
-        let proxy_socket = UdpSocket::bind("127.0.0.1:0")?;
-        let local_addr = proxy_socket.local_addr()?;
-        proxy_socket.set_nonblocking(true)?;
-
-        info!("Created UDP proxy: {} -> {} (via WireGuard)", local_addr, target_addr);
-
-        // Start a forwarder thread for this proxy (local -> WireGuard)
-        let state = self.state.clone();
-        let running = self.running.clone();
-        let proxy_recv = proxy_socket.try_clone()?;
-
-        let target = target_addr;
-        let client_addr_tracker = Arc::new(Mutex::new(None::<SocketAddr>));
-        let client_addr_for_loop = client_addr_tracker.clone();
-        let tun_ip = match self.config.tunnel_address {
-            IpAddr::V4(ip) => ip,
-            _ => Ipv4Addr::new(10, 0, 0, 2),
-        };
-        
-        thread::Builder::new()
-            .name(format!("wg-udp-fwd-{}", local_addr.port()))
-            .spawn(move || {
-                Self::udp_proxy_forward_loop(state, running, proxy_recv, target, client_addr_for_loop, tun_ip);
-            })?;
-
-        // Register the proxy for reverse traffic (WireGuard -> local)
-        self.udp_proxies.lock().insert(target_addr.port(), UdpProxyEntry {
-            proxy_socket,
-            target_addr,
-            local_addr,
-            client_addr: client_addr_tracker,
-        });
-
-        Ok(local_addr)
-    }
-
-    /// Create UDP proxies for all moonlight streaming ports on the same local ports.
-    /// This allows using 127.0.0.1 as the server address while forwarding to the WG target.
-    /// 
-    /// Moonlight uses:
-    /// - base_port (47998): video
-    /// - base_port+1 (47999): control
-    /// - base_port+2 (48000): audio
-    /// - RTSP port (47989 or 48010): setup (TCP)
-    pub fn create_streaming_proxies(&self, target_ip: Ipv4Addr, base_port: u16) -> io::Result<()> {
-        // Create proxies for video, control, audio
-        let mut success_count = 0;
-        for offset in 0..3 {
-            let port = base_port + offset;
-            let target = SocketAddr::new(IpAddr::V4(target_ip), port);
-            
-            // Try to bind to the same port locally for transparent proxying
-            let proxy_socket = match UdpSocket::bind(format!("127.0.0.1:{}", port)) {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!("Could not bind to port {}: {}, trying random port", port, e);
-                    match UdpSocket::bind("127.0.0.1:0") {
-                        Ok(s) => s,
-                        Err(e2) => {
-                            error!("Failed to create UDP proxy for port {}: {}", port, e2);
-                            continue; // Skip this port, try next
-                        }
-                    }
-                }
-            };
-            let local_addr = match proxy_socket.local_addr() {
-                Ok(addr) => addr,
-                Err(e) => {
-                    error!("Failed to get local address for port {}: {}", port, e);
-                    continue;
-                }
-            };
-            if let Err(e) = proxy_socket.set_nonblocking(true) {
-                error!("Failed to set nonblocking for port {}: {}", port, e);
-                continue;
-            }
-
-            info!("Created streaming UDP proxy: {} -> {} (via WireGuard)", local_addr, target);
-
-            let state = self.state.clone();
-            let running = self.running.clone();
-            let proxy_recv = match proxy_socket.try_clone() {
-                Ok(s) => s,
-                Err(e) => {
-                    error!("Failed to clone UDP socket for port {}: {}", port, e);
-                    continue;
-                }
-            };
-
-            let client_addr_tracker = Arc::new(Mutex::new(None::<SocketAddr>));
-            let client_addr_for_loop = client_addr_tracker.clone();
-            let tun_ip = match self.config.tunnel_address {
-                IpAddr::V4(ip) => ip,
-                _ => Ipv4Addr::new(10, 0, 0, 2),
-            };
-
-            if let Err(e) = thread::Builder::new()
-                .name(format!("wg-udp-stream-{}", port))
-                .spawn(move || {
-                    Self::udp_proxy_forward_loop(state, running, proxy_recv, target, client_addr_for_loop, tun_ip);
-                }) {
-                error!("Failed to spawn UDP proxy thread for port {}: {}", port, e);
-                continue;
-            }
-
-            self.udp_proxies.lock().insert(port, UdpProxyEntry {
-                proxy_socket,
-                target_addr: target,
-                local_addr,
-                client_addr: client_addr_tracker,
-            });
-            success_count += 1;
-        }
-
-        if success_count == 0 {
-            return Err(io::Error::new(io::ErrorKind::Other, "Failed to create any UDP proxy"));
-        }
-        
-        info!("Created {}/3 streaming UDP proxies", success_count);
-        Ok(())
     }
 
     /// Initiate the WireGuard handshake
@@ -379,7 +220,6 @@ impl WireGuardTunnel {
     fn endpoint_receiver_loop(
         state: Arc<Mutex<TunnelState>>,
         running: Arc<AtomicBool>,
-        udp_proxies: Arc<Mutex<HashMap<u16, UdpProxyEntry>>>,
     ) {
         let mut recv_buf = vec![0u8; WG_BUFFER_SIZE];
         let mut dec_buf = vec![0u8; WG_BUFFER_SIZE];
@@ -457,31 +297,16 @@ impl WireGuardTunnel {
                             // TCP packet - forward to HTTP shared proxy's virtual stack
                             crate::wg_http::wg_http_inject_packet(data);
                         } else if protocol == 17 {
-                            // UDP packet - try zero-copy channel first, then proxy fallback
+                            // UDP packet - deliver via zero-copy channel
                             if let Some((src_port, dst_port, payload)) = parse_udp_from_ip_packet(data) {
                                 debug!("WG UDP received: src_port={}, dst_port={}, payload_len={}", src_port, dst_port, payload.len());
                                 // Try zero-copy delivery via platform_sockets channel
                                 if crate::platform_sockets::try_push_udp_data(src_port, payload) {
                                     debug!("WG UDP: delivered via zero-copy channel (src_port={})", src_port);
-                                    // Data delivered via zero-copy channel, skip proxy
                                 } else if crate::platform_sockets::try_inject_udp_data(src_port, payload) {
                                     debug!("WG UDP: delivered via loopback injection (src_port={})", src_port);
-                                    // Data delivered via loopback injection (ENet etc.)
                                 } else {
-                                    // No zero-copy channel or inject socket, use proxy fallback
-                                    let proxies = udp_proxies.lock();
-                                    if let Some(proxy) = proxies.get(&src_port) {
-                                        let client = proxy.client_addr.lock();
-                                        if let Some(client_addr) = *client {
-                                            if let Err(e) = proxy.proxy_socket.send_to(payload, client_addr) {
-                                                debug!("Failed to forward decapsulated UDP packet to {}: {}", client_addr, e);
-                                            }
-                                        } else {
-                                            debug!("No client connected to proxy for port {} yet", src_port);
-                                        }
-                                    } else {
-                                        debug!("No proxy found for source port {}", src_port);
-                                    }
+                                    debug!("WG UDP: no channel found for src_port={}", src_port);
                                 }
                             }
                         }
@@ -497,70 +322,6 @@ impl WireGuardTunnel {
         }
 
         info!("WireGuard endpoint receiver stopped");
-    }
-
-    /// Background thread: forwards packets from a local proxy socket through WireGuard
-    fn udp_proxy_forward_loop(
-        state: Arc<Mutex<TunnelState>>,
-        running: Arc<AtomicBool>,
-        proxy_socket: UdpSocket,
-        target_addr: SocketAddr,
-        client_addr_tracker: Arc<Mutex<Option<SocketAddr>>>,
-        tunnel_ip: Ipv4Addr,
-    ) {
-        let mut recv_buf = vec![0u8; MAX_UDP_PACKET_SIZE];
-        let mut dst_buf = vec![0u8; WG_BUFFER_SIZE];
-
-        // Set read timeout for periodic shutdown check
-        let _ = proxy_socket.set_read_timeout(Some(Duration::from_millis(100)));
-
-        debug!("UDP proxy forwarder started for target {}", target_addr);
-
-        while running.load(Ordering::SeqCst) {
-            let (n, src_addr) = match proxy_socket.recv_from(&mut recv_buf) {
-                Ok(result) => result,
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut => {
-                    continue;
-                }
-                Err(e) => {
-                    if running.load(Ordering::SeqCst) {
-                        debug!("UDP proxy recv error: {}", e);
-                    }
-                    continue;
-                }
-            };
-
-            // Store the client address so we can send responses back
-            {
-                let mut client = client_addr_tracker.lock();
-                if client.is_none() || *client != Some(src_addr) {
-                    debug!("UDP proxy: tracking client {} for target {}", src_addr, target_addr);
-                    *client = Some(src_addr);
-                }
-            }
-
-            // Build IP/UDP packet and encapsulate through WireGuard
-            let src_socket_addr = SocketAddr::new(
-                IpAddr::V4(tunnel_ip),
-                src_addr.port()
-            );
-            let ip_packet = build_udp_ip_packet(src_socket_addr, target_addr, &recv_buf[..n]);
-
-            let mut st = state.lock();
-            match st.tunnel.encapsulate(&ip_packet, &mut dst_buf) {
-                TunnResult::WriteToNetwork(data) => {
-                    if let Err(e) = st.endpoint_socket.send(data) {
-                        debug!("Failed to send encapsulated packet: {}", e);
-                    }
-                }
-                TunnResult::Err(e) => {
-                    warn!("WireGuard encapsulation error: {:?}", e);
-                }
-                _ => {}
-            }
-        }
-
-        debug!("UDP proxy forwarder stopped for target {}", target_addr);
     }
 
     /// Background thread: periodic timer for keepalive and handshake maintenance
@@ -891,28 +652,6 @@ pub fn wg_is_tunnel_active() -> bool {
     global.as_ref().map_or(false, |t| t.is_ready())
 }
 
-/// Create streaming UDP proxies for all moonlight ports.
-/// This sets up proxies on the same ports locally (47998, 47999, 48000) forwarding to target.
-/// Also enables zero-copy routing in platform_sockets for direct WG encapsulation.
-pub fn wg_create_streaming_proxies(target_ip: Ipv4Addr, base_port: u16) -> io::Result<()> {
-    let global = GLOBAL_TUNNEL.lock();
-    match global.as_ref() {
-        Some(tunnel) => {
-            tunnel.create_streaming_proxies(target_ip, base_port)?;
-
-            // Enable zero-copy routing: extract tunnel IP from config
-            let tunnel_ip = match tunnel.config.tunnel_address {
-                IpAddr::V4(ip) => ip,
-                _ => Ipv4Addr::new(10, 0, 0, 2), // fallback
-            };
-            crate::platform_sockets::enable_wg_routing(tunnel_ip, target_ip);
-
-            Ok(())
-        }
-        None => Err(io::Error::new(io::ErrorKind::NotConnected, "WireGuard tunnel not active")),
-    }
-}
-
 /// Send an IP packet through the global WireGuard tunnel.
 /// This is used by wg_http to route TCP traffic through the streaming tunnel.
 pub fn wg_send_ip_packet(packet: &[u8]) -> io::Result<()> {
@@ -936,19 +675,21 @@ pub fn wg_send_ip_packet(packet: &[u8]) -> io::Result<()> {
     }
 }
 
-/// Enable direct WireGuard routing without creating UDP proxies.
+/// Enable direct WireGuard routing for UDP/TCP traffic.
 /// This enables zero-copy routing: socket sendto calls targeting the WG server IP
 /// are intercepted and encapsulated directly through the WG tunnel.
-///
-/// Use this instead of wg_create_streaming_proxies when you want to use
-/// the actual WG server IP instead of 127.0.0.1 proxies.
 pub fn wg_enable_direct_routing(server_ip: Ipv4Addr) -> io::Result<()> {
     let global = GLOBAL_TUNNEL.lock();
     match global.as_ref() {
         Some(tunnel) => {
             let tunnel_ip = match tunnel.config.tunnel_address {
                 IpAddr::V4(ip) => ip,
-                _ => Ipv4Addr::new(10, 0, 0, 2), // fallback
+                IpAddr::V6(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "IPv6 tunnel address not supported",
+                    ));
+                }
             };
             crate::platform_sockets::enable_wg_routing(tunnel_ip, server_ip);
             info!("Direct WireGuard routing enabled: tunnel_ip={}, server_ip={}", tunnel_ip, server_ip);

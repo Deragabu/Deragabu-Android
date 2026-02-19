@@ -96,7 +96,13 @@ public class WgSocket extends Socket {
 
         // Get the allocated local port from native
         int localPort = nativeGetLocalPort(nativeHandle);
-        localAddress = new InetSocketAddress("10.0.0.2", localPort);
+        
+        // Use the configured tunnel address instead of hardcoded IP
+        String tunnelAddr = WireGuardManager.getCurrentTunnelAddress();
+        if (tunnelAddr == null || tunnelAddr.isEmpty()) {
+            tunnelAddr = "0.0.0.0"; // Fallback if not configured
+        }
+        localAddress = new InetSocketAddress(tunnelAddr, localPort);
 
         Log.i(TAG, "Connected to " + host + ":" + port + " via WireGuard (handle=" + nativeHandle + ")");
     }

@@ -490,17 +490,6 @@ public class MoonBridge {
     public static native boolean wgIsTunnelActive();
 
     /**
-     * Create streaming UDP proxies for all moonlight ports (video, control, audio).
-     * These proxies bind to the same ports locally (47998, 47999, 48000) for transparent forwarding.
-     * After calling this, use 127.0.0.1 as the server address.
-     *
-     * @param targetAddr The WireGuard server IP address (e.g., "10.0.0.1")
-     * @param basePort   The base port for streaming (typically 47998)
-     * @return true on success, false on failure
-     */
-    public static native boolean wgCreateStreamingProxies(String targetAddr, int basePort);
-
-    /**
      * Enable direct WireGuard routing for UDP traffic.
      * This enables zero-copy routing: sendto calls targeting the WG server IP
      * are intercepted at the socket layer and encapsulated directly through the WG tunnel.

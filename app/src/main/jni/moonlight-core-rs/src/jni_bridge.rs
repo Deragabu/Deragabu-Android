@@ -1192,47 +1192,6 @@ pub extern "C" fn Java_com_limelight_nvstream_jni_MoonBridge_wgIsTunnelActive(
     }
 }
 
-/// Create streaming UDP proxies for all moonlight ports (47998, 47999, 48000).
-/// These proxies bind to the same ports locally for transparent forwarding.
-/// 
-/// Parameters:
-///   targetAddr: target address string (the WireGuard server IP, e.g., "10.0.0.1")
-///   basePort: base port for streaming (typically 47998)
-/// Returns: true on success, false on failure
-#[no_mangle]
-pub extern "C" fn Java_com_limelight_nvstream_jni_MoonBridge_wgCreateStreamingProxies(
-    env: JNIEnv,
-    _clazz: JClass,
-    target_addr: JString,
-    base_port: JInt,
-) -> JBoolean {
-    let addr_str = unsafe { jni_get_string_utf_chars(env, target_addr) };
-    if addr_str.is_null() {
-        return JNI_FALSE;
-    }
-    let addr = unsafe { CStr::from_ptr(addr_str) }.to_string_lossy().to_string();
-    unsafe { jni_release_string_utf_chars(env, target_addr, addr_str) };
-
-    let target_ip: std::net::Ipv4Addr = match addr.parse() {
-        Ok(ip) => ip,
-        Err(e) => {
-            error!("wgCreateStreamingProxies: invalid address '{}': {}", addr, e);
-            return JNI_FALSE;
-        }
-    };
-
-    match crate::wireguard::wg_create_streaming_proxies(target_ip, base_port as u16) {
-        Ok(()) => {
-            info!("Created WireGuard streaming proxies for {} base port {}", target_ip, base_port);
-            JNI_TRUE
-        }
-        Err(e) => {
-            error!("Failed to create WireGuard streaming proxies: {}", e);
-            JNI_FALSE
-        }
-    }
-}
-
 /// Enable direct WireGuard routing for UDP traffic.
 /// JNI interface: MoonBridge.wgEnableDirectRouting(String serverAddr)
 ///
