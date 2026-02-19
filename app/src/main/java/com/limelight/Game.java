@@ -178,6 +178,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private StatsNotificationHelper statsNotificationHelper;
     private String activeVideoCodec = "";
 
+    private String host; // Saved for WireGuard lifecycle management
+    private boolean wireGuardConfigured = false; // Track if WireGuard was set up
+
     private boolean connectedToUsbDriverService = false;
     private final ServiceConnection usbDriverServiceConnection = new ServiceConnection() {
         @Override
@@ -419,7 +422,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         appName = Game.this.getIntent().getStringExtra(EXTRA_APP_NAME);
         pcName = Game.this.getIntent().getStringExtra(EXTRA_PC_NAME);
 
-        String host = Game.this.getIntent().getStringExtra(EXTRA_HOST);
+        host = Game.this.getIntent().getStringExtra(EXTRA_HOST);
         int port = Game.this.getIntent().getIntExtra(EXTRA_PORT, NvHTTP.DEFAULT_HTTP_PORT);
         int httpsPort = Game.this.getIntent().getIntExtra(EXTRA_HTTPS_PORT, 0); // 0 is treated as unknown
         int appId = Game.this.getIntent().getIntExtra(EXTRA_APP_ID, StreamConfiguration.INVALID_APP_ID);
@@ -572,58 +575,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 .build();
 
         // Setup WireGuard proxies if enabled
-        // Server IP is derived from the target host, not a separate setting
-        if (prefConfig.wgEnabled) {
-            Log.i(TAG, "WireGuard enabled, setting up proxies for host: " + host);
-            try {
-                // Build WireGuard config
-                WireGuardManager.Config wgConfig = new WireGuardManager.Config()
-                        .setPrivateKeyBase64(prefConfig.wgPrivateKey)
-                        .setPeerPublicKeyBase64(prefConfig.wgPeerPublicKey)
-                        .setPresharedKeyBase64(prefConfig.wgPresharedKey.isEmpty() ? null : prefConfig.wgPresharedKey)
-                        .setEndpoint(prefConfig.wgEndpoint)
-                        .setTunnelAddress(prefConfig.wgTunnelAddress);
-
-                // Configure WireGuard HTTP routing (OkHttp uses WgSocket)
-                if (WireGuardManager.configureHttp(wgConfig, host)) {
-                    Log.i(TAG, "WireGuard HTTP routing configured for " + host);
-                } else {
-                    Log.e(TAG, "Failed to configure direct WireGuard HTTP");
-                }
-
-                // Start WireGuard tunnel for native streaming
-                byte[] privateKey = MoonBridge.parseWireGuardKey(prefConfig.wgPrivateKey);
-                byte[] peerPublicKey = MoonBridge.parseWireGuardKey(prefConfig.wgPeerPublicKey);
-                byte[] presharedKey = prefConfig.wgPresharedKey.isEmpty() ? null : 
-                        MoonBridge.parseWireGuardKey(prefConfig.wgPresharedKey);
-                
-                // Parse endpoint
-                String[] endpointParts = prefConfig.wgEndpoint.split(":");
-                String endpointHost = endpointParts[0];
-                int endpointPort = endpointParts.length > 1 ? Integer.parseInt(endpointParts[1]) : 51820;
-                
-                // Start the global WireGuard tunnel
-                int wgResult = MoonBridge.wgStartTunnel(privateKey, peerPublicKey, presharedKey,
-                        endpointHost, endpointPort, prefConfig.wgTunnelAddress, 25, 1420);
-                
-                if (wgResult == 0) {
-                    Log.i(TAG, "WireGuard tunnel started");
-                    
-                    // Enable direct WireGuard routing - socket layer hook intercepts traffic
-                    // to the target host IP and encapsulates directly through the tunnel
-                    boolean routingResult = MoonBridge.wgEnableDirectRouting(host);
-                    if (routingResult) {
-                        Log.i(TAG, "Direct WireGuard routing enabled for " + host);
-                    } else {
-                        Log.e(TAG, "Failed to enable direct WireGuard routing");
-                    }
-                } else {
-                    Log.e(TAG, "Failed to start WireGuard tunnel: " + wgResult);
-                }
-            } catch (Exception e) {
-                Log.e(TAG, "Failed to setup WireGuard proxies", e);
-            }
-        }
+        startWireGuard();
 
         // Initialize the connection
         conn = new NvConnection(getApplicationContext(),
@@ -1156,32 +1108,140 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         SpinnerDialog.closeDialogs(this);
         Dialog.closeDialogs();
 
+        if (isFinishing()) {
+            // Full cleanup when the activity is finishing (user chose disconnect)
+            if (conn != null) {
+                int videoFormat = decoderRenderer.getActiveVideoFormat();
 
-        if (conn != null) {
-            int videoFormat = decoderRenderer.getActiveVideoFormat();
+                displayedFailureDialog = true;
+                stopConnection();
 
-            displayedFailureDialog = true;
-            stopConnection();
+                if (prefConfig.enableLatencyToast) {
+                    int averageEndToEndLat = decoderRenderer.getAverageEndToEndLatency();
+                    int averageDecoderLat = decoderRenderer.getAverageDecoderLatency();
 
-            if (prefConfig.enableLatencyToast) {
-                int averageEndToEndLat = decoderRenderer.getAverageEndToEndLatency();
-                int averageDecoderLat = decoderRenderer.getAverageDecoderLatency();
+                    // Show latency notification instead of toast
+                    LatencyNotificationHelper latencyNotification = new LatencyNotificationHelper(this);
+                    latencyNotification.showLatencyNotification(averageEndToEndLat, averageDecoderLat, videoFormat);
+                }
 
-                // Show latency notification instead of toast
-                LatencyNotificationHelper latencyNotification = new LatencyNotificationHelper(this);
-                latencyNotification.showLatencyNotification(averageEndToEndLat, averageDecoderLat, videoFormat);
+                // Clear the tombstone count if we terminated normally
+                if (!reportedCrash && tombstonePrefs.getInt("CrashCount", 0) != 0) {
+                    tombstonePrefs.edit()
+                            .putInt("CrashCount", 0)
+                            .putInt("LastNotifiedCrashCount", 0)
+                            .apply();
+                }
             }
+        } else {
+            // Going to background - stop WireGuard tunnel to save resources
+            // It will be restarted in onStart() when returning to foreground
+            stopWireGuard();
+        }
+    }
 
-            // Clear the tombstone count if we terminated normally
-            if (!reportedCrash && tombstonePrefs.getInt("CrashCount", 0) != 0) {
-                tombstonePrefs.edit()
-                        .putInt("CrashCount", 0)
-                        .putInt("LastNotifiedCrashCount", 0)
-                        .apply();
-            }
+    @Override
+    protected void onStart() {
+        super.onStart();
+
+        // Restart WireGuard tunnel when coming back from background
+        if (wireGuardConfigured && !isFinishing()) {
+            startWireGuard();
+        }
+    }
+
+    /**
+     * Start the WireGuard tunnel and configure HTTP routing.
+     * Called during onCreate() and onStart() (when resuming from background).
+     */
+    private void startWireGuard() {
+        if (!prefConfig.wgEnabled || host == null) {
+            return;
         }
 
-        finish();
+        // Stop any existing tunnel first to ensure a clean state
+        if (MoonBridge.wgIsTunnelActive()) {
+            MoonBridge.wgStopTunnel();
+            Log.i(TAG, "Stopped existing WireGuard tunnel before restart");
+        }
+        if (WireGuardManager.isHttpConfigured()) {
+            WireGuardManager.clearHttpConfig();
+        }
+
+        Log.i(TAG, "Starting WireGuard for host: " + host);
+        try {
+            // Build WireGuard config
+            WireGuardManager.Config wgConfig = new WireGuardManager.Config()
+                    .setPrivateKeyBase64(prefConfig.wgPrivateKey)
+                    .setPeerPublicKeyBase64(prefConfig.wgPeerPublicKey)
+                    .setPresharedKeyBase64(prefConfig.wgPresharedKey.isEmpty() ? null : prefConfig.wgPresharedKey)
+                    .setEndpoint(prefConfig.wgEndpoint)
+                    .setTunnelAddress(prefConfig.wgTunnelAddress);
+
+            // Configure WireGuard HTTP routing (OkHttp uses WgSocket)
+            if (WireGuardManager.configureHttp(wgConfig, host)) {
+                Log.i(TAG, "WireGuard HTTP routing configured for " + host);
+            } else {
+                Log.e(TAG, "Failed to configure direct WireGuard HTTP");
+            }
+
+            // Start WireGuard tunnel for native streaming
+            byte[] privateKey = MoonBridge.parseWireGuardKey(prefConfig.wgPrivateKey);
+            byte[] peerPublicKey = MoonBridge.parseWireGuardKey(prefConfig.wgPeerPublicKey);
+            byte[] presharedKey = prefConfig.wgPresharedKey.isEmpty() ? null :
+                    MoonBridge.parseWireGuardKey(prefConfig.wgPresharedKey);
+
+            // Parse endpoint
+            String[] endpointParts = prefConfig.wgEndpoint.split(":");
+            String endpointHost = endpointParts[0];
+            int endpointPort = endpointParts.length > 1 ? Integer.parseInt(endpointParts[1]) : 51820;
+
+            // Start the global WireGuard tunnel
+            int wgResult = MoonBridge.wgStartTunnel(privateKey, peerPublicKey, presharedKey,
+                    endpointHost, endpointPort, prefConfig.wgTunnelAddress, 25, 1420);
+
+            if (wgResult == 0) {
+                Log.i(TAG, "WireGuard tunnel started");
+                wireGuardConfigured = true;
+
+                // Enable direct WireGuard routing - socket layer hook intercepts traffic
+                // to the target host IP and encapsulates directly through the tunnel
+                boolean routingResult = MoonBridge.wgEnableDirectRouting(host);
+                if (routingResult) {
+                    Log.i(TAG, "Direct WireGuard routing enabled for " + host);
+                } else {
+                    Log.e(TAG, "Failed to enable direct WireGuard routing");
+                }
+            } else {
+                Log.e(TAG, "Failed to start WireGuard tunnel: " + wgResult);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to setup WireGuard", e);
+        }
+    }
+
+    /**
+     * Stop the WireGuard tunnel and clear HTTP routing.
+     * Called when going to background (onStop) or during full teardown.
+     */
+    private void stopWireGuard() {
+        if (!prefConfig.wgEnabled) {
+            return;
+        }
+
+        Log.i(TAG, "Stopping WireGuard tunnel");
+        try {
+            if (WireGuardManager.isHttpConfigured()) {
+                WireGuardManager.clearHttpConfig();
+                Log.i(TAG, "WireGuard direct HTTP cleared");
+            }
+            if (MoonBridge.wgIsTunnelActive()) {
+                MoonBridge.wgStopTunnel();
+                Log.i(TAG, "WireGuard tunnel stopped");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to stop WireGuard", e);
+        }
     }
 
     private void setInputGrabState(boolean grab) {

@@ -11,7 +11,7 @@
 //! - Outgoing packets queued for the caller to send through WireGuard
 //! - Incoming data delivered to application via mpsc channels
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io;
 use std::net::Ipv4Addr;
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
@@ -19,7 +19,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use etherparse::{IpNumber, Ipv4Header, TcpHeader};
-use log::{debug, info, warn};
+use log::{info, warn};
 use parking_lot::{Condvar, Mutex};
 
 /// TCP connection state
@@ -44,12 +44,30 @@ pub struct TcpConnectionId {
     pub remote_port: u16,
 }
 
+/// A segment stored for potential retransmission
+struct RetransmitSegment {
+    seq: u32,
+    data: Vec<u8>,
+    flags: u8,
+    sent_at: Instant,
+    retransmit_count: u32,
+}
+
+/// TCP window scale shift count for our receive window.
+/// With shift=7, effective window = 65535 * 128 = ~8MB, supporting
+/// high throughput even at moderate latencies (e.g., 100Mbps @ 80ms RTT).
+const TCP_WINDOW_SCALE_SHIFT: u8 = 7;
+
 /// TCP control block - tracks per-connection state
 struct TcpControlBlock {
     state: TcpState,
     local_seq: u32,
+    /// The initial sequence number used in SYN (for retransmission)
+    initial_seq: u32,
     /// The next expected sequence number from the remote (used for ACKs)
     local_ack: u32,
+    /// Send unacknowledged: the oldest byte we've sent that hasn't been ACKed
+    snd_una: u32,
     tx_to_app: mpsc::SyncSender<Vec<u8>>,
     #[allow(dead_code)]
     created_at: Instant,
@@ -65,6 +83,10 @@ struct TcpControlBlock {
     /// we record its effective sequence number here and defer processing
     /// until all preceding data has been received.
     pending_fin_seq: Option<u32>,
+    /// Retransmission queue: segments sent but not yet acknowledged
+    retransmit_queue: VecDeque<RetransmitSegment>,
+    /// Current retransmission timeout (adaptive, starts at 500ms)
+    rto: Duration,
 }
 
 /// Action to perform after processing a TCP packet (outside the lock)
@@ -195,20 +217,26 @@ impl VirtualStack {
             remote_port,
         };
 
-        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(256);
+        // Larger channel buffer to support TCP window scaling (up to ~8MB window).
+        // With 2048 entries * ~1360 bytes MSS = ~2.8MB effective buffer.
+        let (tx, rx) = mpsc::sync_channel::<Vec<u8>>(2048);
 
         let now = Instant::now();
         let tcb = TcpControlBlock {
             state: TcpState::SynSent,
             local_seq: initial_seq,
+            initial_seq, // Store for SYN retransmission
             local_ack: 0,
+            snd_una: initial_seq, // Will be updated on SYN-ACK
             tx_to_app: tx,
             created_at: now,
             last_activity: now,
             reorder_buffer: BTreeMap::new(),
-            max_reorder_buffer_bytes: 256 * 1024, // 256KB max buffer
+            max_reorder_buffer_bytes: 1024 * 1024, // 1MB max reorder buffer
             reorder_buffer_bytes: 0,
             pending_fin_seq: None,
+            retransmit_queue: VecDeque::new(),
+            rto: Duration::from_millis(500),
         };
 
         {
@@ -251,6 +279,7 @@ impl VirtualStack {
         // Segment data by a conservative MSS (1360 bytes for WG tunnel)
         // MTU 1420 - IP header 20 - TCP header 20 - some margin = 1360
         let mss = 1360usize;
+        let now = Instant::now();
         for chunk in data.chunks(mss) {
             let flags = if chunk.as_ptr() as usize + chunk.len()
                 == data.as_ptr() as usize + data.len()
@@ -261,6 +290,21 @@ impl VirtualStack {
                 TcpFlags::ACK
             };
             self.send_tcp_packet(conn_id, seq, ack, flags, chunk);
+
+            // Store segment for potential retransmission
+            {
+                let mut conns = self.tcp_connections.lock();
+                if let Some(tcb) = conns.get_mut(conn_id) {
+                    tcb.retransmit_queue.push_back(RetransmitSegment {
+                        seq,
+                        data: chunk.to_vec(),
+                        flags,
+                        sent_at: now,
+                        retransmit_count: 0,
+                    });
+                }
+            }
+
             seq = seq.wrapping_add(chunk.len() as u32);
         }
 
@@ -272,6 +316,8 @@ impl VirtualStack {
         let (seq, ack) = {
             let mut conns = self.tcp_connections.lock();
             if let Some(tcb) = conns.get_mut(conn_id) {
+                // Clear retransmit queue on close - no point retransmitting
+                tcb.retransmit_queue.clear();
                 match tcb.state {
                     TcpState::Established => {
                         // Active close: we initiate FIN
@@ -316,6 +362,78 @@ impl VirtualStack {
         conns.remove(conn_id);
     }
 
+    /// Resend SYN for a connection in SynSent state.
+    /// Returns true if SYN was resent, false if connection is not in SynSent state.
+    pub fn resend_syn_if_pending(&self, conn_id: &TcpConnectionId) -> bool {
+        let initial_seq = {
+            let conns = self.tcp_connections.lock();
+            if let Some(tcb) = conns.get(conn_id) {
+                if tcb.state == TcpState::SynSent {
+                    Some(tcb.initial_seq)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some(seq) = initial_seq {
+            self.send_tcp_packet(conn_id, seq, 0, TcpFlags::SYN, &[]);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check all connections for segments that need retransmission.
+    /// Returns the number of segments retransmitted.
+    pub fn check_retransmissions(&self) -> usize {
+        let now = Instant::now();
+        let max_retransmits: u32 = 8;
+        let max_rto = Duration::from_secs(8);
+
+        // Collect segments that need retransmission (under lock)
+        let mut to_retransmit: Vec<(TcpConnectionId, u32, Vec<u8>, u8, u32)> = Vec::new();
+        {
+            let mut conns = self.tcp_connections.lock();
+            for (conn_id, tcb) in conns.iter_mut() {
+                if tcb.state != TcpState::Established && tcb.state != TcpState::CloseWait {
+                    continue;
+                }
+                for seg in tcb.retransmit_queue.iter_mut() {
+                    if now.duration_since(seg.sent_at) >= tcb.rto {
+                        if seg.retransmit_count >= max_retransmits {
+                            warn!("TCP retransmit limit reached for {}:{} seq={}",
+                                  conn_id.remote_addr, conn_id.remote_port, seg.seq);
+                            continue;
+                        }
+                        to_retransmit.push((
+                            *conn_id,
+                            seg.seq,
+                            seg.data.clone(),
+                            seg.flags,
+                            tcb.local_ack,
+                        ));
+                        seg.retransmit_count += 1;
+                        seg.sent_at = now;
+                        // Exponential backoff for RTO
+                        tcb.rto = (tcb.rto * 2).min(max_rto);
+                    }
+                    // Only retransmit the first unACKed segment per connection (go-back-N style)
+                    break;
+                }
+            }
+        }
+
+        // Send retransmit packets outside the lock
+        let count = to_retransmit.len();
+        for (conn_id, seq, data, flags, ack) in to_retransmit {
+            self.send_tcp_packet(&conn_id, seq, ack, flags, &data);
+        }
+        count
+    }
+
     /// Take all queued outgoing IP packets (caller sends them through WireGuard)
     pub fn take_outgoing_packets(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.outgoing_packets.lock())
@@ -329,17 +447,13 @@ impl VirtualStack {
 
         let version = (packet[0] >> 4) & 0x0F;
         if version != 4 {
-            debug!("Ignoring non-IPv4 packet (version={})", version);
             return;
         }
 
         // Parse IPv4 header
         let (ip_header, payload) = match Ipv4Header::from_slice(packet) {
             Ok(r) => r,
-            Err(e) => {
-                debug!("Failed to parse IPv4 header: {}", e);
-                return;
-            }
+            Err(_) => return,
         };
 
         let src_ip = Ipv4Addr::from(ip_header.source);
@@ -347,22 +461,14 @@ impl VirtualStack {
 
         match ip_header.protocol {
             IpNumber::TCP => self.process_tcp_packet(src_ip, dst_ip, payload),
-            _ => {
-                debug!(
-                    "Ignoring non-TCP packet (protocol={:?})",
-                    ip_header.protocol
-                );
-            }
+            _ => {}
         }
     }
 
     fn process_tcp_packet(&self, src_ip: Ipv4Addr, dst_ip: Ipv4Addr, payload: &[u8]) {
         let (tcp_header, tcp_payload) = match TcpHeader::from_slice(payload) {
             Ok(r) => r,
-            Err(e) => {
-                debug!("Failed to parse TCP header: {}", e);
-                return;
-            }
+            Err(_) => return,
         };
 
         let conn_id = TcpConnectionId {
@@ -371,22 +477,6 @@ impl VirtualStack {
             remote_addr: src_ip,
             remote_port: tcp_header.source_port,
         };
-
-        debug!(
-            "Received TCP: {}:{} -> {}:{} seq={} ack={} flags=[{}{}{}{}{}] payload={}",
-            src_ip,
-            tcp_header.source_port,
-            dst_ip,
-            tcp_header.destination_port,
-            tcp_header.sequence_number,
-            tcp_header.acknowledgment_number,
-            if tcp_header.syn { "S" } else { "" },
-            if tcp_header.ack { "A" } else { "" },
-            if tcp_header.fin { "F" } else { "" },
-            if tcp_header.rst { "R" } else { "" },
-            if tcp_header.psh { "P" } else { "" },
-            tcp_payload.len(),
-        );
 
         // Process packet while holding lock, determine action to take
         let action = {
@@ -399,6 +489,7 @@ impl VirtualStack {
                             // SYN-ACK received - complete handshake
                             tcb.local_ack = tcp_header.sequence_number.wrapping_add(1);
                             tcb.local_seq = tcp_header.acknowledgment_number;
+                            tcb.snd_una = tcp_header.acknowledgment_number;
                             tcb.state = TcpState::Established;
                             tcb.last_activity = Instant::now();
                             TcpPacketAction::ConnectionEstablished {
@@ -416,9 +507,33 @@ impl VirtualStack {
                     }
                     TcpState::Established => {
                         tcb.last_activity = Instant::now();
+
+                        // Process ACK number - advance snd_una and clear retransmit buffer
+                        if tcp_header.ack {
+                            let ack_num = tcp_header.acknowledgment_number;
+                            // Only advance if ACK is within valid range
+                            let ack_advance = ack_num.wrapping_sub(tcb.snd_una) as i32;
+                            if ack_advance > 0 {
+                                tcb.snd_una = ack_num;
+                                // Remove fully acknowledged segments from retransmit queue
+                                while let Some(front) = tcb.retransmit_queue.front() {
+                                    let seg_end = front.seq.wrapping_add(front.data.len() as u32);
+                                    // If snd_una >= seg_end, this segment is fully ACKed
+                                    if seg_end.wrapping_sub(tcb.snd_una) as i32 <= 0 {
+                                        tcb.retransmit_queue.pop_front();
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                // Reset RTO on successful ACK
+                                tcb.rto = Duration::from_millis(500);
+                            }
+                        }
+
                         if tcp_header.rst {
                             tcb.state = TcpState::Closed;
                             tcb.last_activity = Instant::now();
+                            tcb.retransmit_queue.clear();
                             warn!("Connection reset by peer");
                             TcpPacketAction::SignalEof { tx: tcb.tx_to_app.clone() }
                         } else if tcp_header.fin {
@@ -469,8 +584,6 @@ impl VirtualStack {
                                 }
                             } else {
                                 // Out-of-order FIN (arrives before preceding data)
-                                debug!("Out-of-order FIN seq={} (expected={}), deferring",
-                                       tcp_header.sequence_number, tcb.local_ack);
                                 tcb.pending_fin_seq = Some(fin_seq);
 
                                 // Buffer any data payload from the FIN packet
@@ -502,7 +615,6 @@ impl VirtualStack {
                             
                             if seq_diff < 0 {
                                 // Duplicate or retransmit - just ACK
-                                debug!("Duplicate TCP segment seq={}, expected={}", pkt_seq, expected_seq);
                                 TcpPacketAction::SendAck {
                                     seq: tcb.local_seq,
                                     ack: tcb.local_ack,
@@ -530,7 +642,6 @@ impl VirtualStack {
                                 if let Some(fin_seq) = tcb.pending_fin_seq {
                                     if tcb.local_ack == fin_seq {
                                         // All data before FIN received - process the FIN now
-                                        info!("Pending FIN now in-order at seq={}", fin_seq);
                                         tcb.pending_fin_seq = None;
                                         tcb.state = TcpState::CloseWait;
                                         tcb.local_ack = fin_seq.wrapping_add(1);
@@ -579,8 +690,6 @@ impl VirtualStack {
                                 
                                 // Check buffer size limit
                                 if tcb.reorder_buffer_bytes + data.len() <= tcb.max_reorder_buffer_bytes {
-                                    debug!("Buffering out-of-order TCP segment seq={} (expected={}), gap={}", 
-                                           pkt_seq, expected_seq, seq_diff);
                                     tcb.reorder_buffer_bytes += data.len();
                                     tcb.reorder_buffer.insert(pkt_seq, data);
                                     
@@ -598,7 +707,7 @@ impl VirtualStack {
                                 }
                             }
                         } else {
-                            // Pure ACK - no action needed
+                            // Pure ACK - already processed ACK number above
                             TcpPacketAction::None
                         }
                     }
@@ -678,13 +787,6 @@ impl VirtualStack {
                 }
             } else {
                 if !tcp_header.rst {
-                    debug!(
-                        "No matching connection for TCP {}:{} -> {}:{}",
-                        src_ip,
-                        tcp_header.source_port,
-                        dst_ip,
-                        tcp_header.destination_port
-                    );
                     // Send RST to inform remote side this connection doesn't exist.
                     // This stops retransmissions and cleans up server-side state.
                     let orphan_id = TcpConnectionId {
@@ -820,7 +922,7 @@ impl VirtualStack {
             conn_id.local_port,
             conn_id.remote_port,
             seq,
-            65535, // window size
+            65535, // window size (with WS=7, effective = 65535 * 128 = ~8MB)
         );
         tcp_header.acknowledgment_number = ack;
         tcp_header.syn = (flags & TcpFlags::SYN) != 0;
@@ -828,6 +930,25 @@ impl VirtualStack {
         tcp_header.fin = (flags & TcpFlags::FIN) != 0;
         tcp_header.rst = (flags & TcpFlags::RST) != 0;
         tcp_header.psh = (flags & TcpFlags::PSH) != 0;
+
+        // Add TCP options for SYN packets: MSS + Window Scale
+        // This enables TCP window scaling (RFC 7323), allowing effective
+        // receive window up to ~8MB instead of the 65535 byte limit.
+        if tcp_header.syn {
+            // TCP options (8 bytes, 4-byte aligned):
+            // MSS: kind=2, len=4, value=1360 (conservative for WG tunnel)
+            // NOP: kind=1 (padding for alignment)
+            // Window Scale: kind=3, len=3, shift=TCP_WINDOW_SCALE_SHIFT
+            let mss: u16 = 1360;
+            let options: [u8; 8] = [
+                2, 4, (mss >> 8) as u8, (mss & 0xff) as u8, // MSS
+                1,                                             // NOP
+                3, 3, TCP_WINDOW_SCALE_SHIFT,                  // Window Scale
+            ];
+            if let Err(e) = tcp_header.set_options_raw(&options) {
+                warn!("Failed to set TCP SYN options: {:?}", e);
+            }
+        }
 
         let src = conn_id.local_addr;
         let dst = conn_id.remote_addr;

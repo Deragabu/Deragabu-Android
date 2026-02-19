@@ -87,8 +87,9 @@ impl WireGuardTunnel {
         endpoint_socket.connect(config.endpoint)?;
         endpoint_socket.set_nonblocking(false)?;
 
-        // Set a read timeout so we can periodically check for shutdown
-        endpoint_socket.set_read_timeout(Some(Duration::from_millis(100)))?;
+        // Set a short read timeout for timer/handshake operations
+        // Note: receiver thread clones this socket and sets its own timeout
+        endpoint_socket.set_read_timeout(Some(Duration::from_millis(10)))?;
 
         info!("WireGuard endpoint socket bound to: {}", endpoint_socket.local_addr()?);
 
@@ -194,25 +195,33 @@ impl WireGuardTunnel {
         Ok(())
     }
 
-    /// Send encapsulated data through the WireGuard tunnel
+    /// Send encapsulated data through the WireGuard tunnel.
+    /// Encapsulates under lock (fast crypto), then sends outside lock.
     fn send_through_tunnel(state: &Arc<Mutex<TunnelState>>, payload: &[u8], src_addr: SocketAddr, dst_addr: SocketAddr) -> io::Result<()> {
         // Build an IP/UDP packet wrapping the payload
         let ip_packet = build_udp_ip_packet(src_addr, dst_addr, payload);
 
-        let mut st = state.lock();
-        let mut dst_buf = vec![0u8; WG_BUFFER_SIZE];
+        // Encapsulate under lock, copy result, release lock before sending
+        let (send_data, send_socket) = {
+            let st = state.lock();
+            let mut dst_buf = vec![0u8; WG_BUFFER_SIZE];
 
-        match st.tunnel.encapsulate(&ip_packet, &mut dst_buf) {
-            TunnResult::WriteToNetwork(data) => {
-                st.endpoint_socket.send(data)?;
+            match st.tunnel.encapsulate(&ip_packet, &mut dst_buf) {
+                TunnResult::WriteToNetwork(data) => {
+                    let copied = data.to_vec();
+                    let socket = st.endpoint_socket.try_clone()
+                        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Socket clone: {}", e)))?;
+                    (copied, socket)
+                }
+                TunnResult::Err(e) => {
+                    error!("WireGuard encapsulation error: {:?}", e);
+                    return Err(io::Error::new(io::ErrorKind::Other, format!("Encapsulation failed: {:?}", e)));
+                }
+                _ => return Ok(()),
             }
-            TunnResult::Err(e) => {
-                error!("WireGuard encapsulation error: {:?}", e);
-                return Err(io::Error::new(io::ErrorKind::Other, format!("Encapsulation failed: {:?}", e)));
-            }
-            _ => {}
-        }
-
+        };
+        // Lock released - send outside lock
+        send_socket.send(&send_data)?;
         Ok(())
     }
 
@@ -221,34 +230,41 @@ impl WireGuardTunnel {
         state: Arc<Mutex<TunnelState>>,
         running: Arc<AtomicBool>,
     ) {
+        // CRITICAL PERFORMANCE FIX: Clone socket for receiving so we don't hold
+        // the tunnel state lock during blocking recv(). Previously, the lock was
+        // held for up to 100ms during recv timeout, blocking ALL send operations
+        // (UDP streaming data, TCP ACKs) through the tunnel.
+        let recv_socket = {
+            let st = state.lock();
+            st.endpoint_socket.try_clone()
+                .expect("Failed to clone WG endpoint socket for receiver")
+        };
+        // Use short read timeout (10ms) - just enough to check shutdown flag
+        recv_socket.set_read_timeout(Some(Duration::from_millis(10))).ok();
+
         let mut recv_buf = vec![0u8; WG_BUFFER_SIZE];
         let mut dec_buf = vec![0u8; WG_BUFFER_SIZE];
 
         info!("WireGuard endpoint receiver started");
 
         while running.load(Ordering::SeqCst) {
-            // Read from the endpoint socket
-            let n = {
-                let st = state.lock();
-                match st.endpoint_socket.recv(&mut recv_buf) {
-                    Ok(n) => n,
-                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock 
-                        || e.kind() == io::ErrorKind::TimedOut 
-                        || e.kind() == io::ErrorKind::Interrupted => {
-                        // WouldBlock/TimedOut: no data available, retry
-                        // Interrupted (EINTR): interrupted by signal, retry
-                        continue;
+            // Read WITHOUT holding tunnel lock - allows concurrent sends
+            let n = match recv_socket.recv(&mut recv_buf) {
+                Ok(n) => n,
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock 
+                    || e.kind() == io::ErrorKind::TimedOut 
+                    || e.kind() == io::ErrorKind::Interrupted => {
+                    continue;
+                }
+                Err(e) => {
+                    if running.load(Ordering::SeqCst) {
+                        warn!("WireGuard endpoint recv error: {}", e);
                     }
-                    Err(e) => {
-                        if running.load(Ordering::SeqCst) {
-                            warn!("WireGuard endpoint recv error: {}", e);
-                        }
-                        continue;
-                    }
+                    continue;
                 }
             };
 
-            // Decapsulate the WireGuard packet
+            // Lock briefly for decapsulate only (fast crypto operation, ~microseconds)
             let mut st = state.lock();
             let result = st.tunnel.decapsulate(None, &recv_buf[..n], &mut dec_buf);
 
@@ -654,22 +670,33 @@ pub fn wg_is_tunnel_active() -> bool {
 
 /// Send an IP packet through the global WireGuard tunnel.
 /// This is used by wg_http to route TCP traffic through the streaming tunnel.
+///
+/// Performance: Encapsulate under lock (fast crypto), then send outside lock
+/// to minimize lock hold time and avoid blocking the receiver loop.
 pub fn wg_send_ip_packet(packet: &[u8]) -> io::Result<()> {
     let global = GLOBAL_TUNNEL.lock();
     match global.as_ref() {
         Some(tunnel) => {
-            let mut state = tunnel.state.lock();
-            // Use a local buffer to avoid borrow conflict
-            let mut encode_buf = vec![0u8; WG_BUFFER_SIZE];
-            match state.tunnel.encapsulate(packet, &mut encode_buf) {
-                TunnResult::WriteToNetwork(data) => {
-                    state.endpoint_socket.send(data)?;
-                    Ok(())
+            // Encapsulate under lock (fast), copy result, release lock, then send
+            let (send_data, send_socket) = {
+                let state = tunnel.state.lock();
+                let mut encode_buf = vec![0u8; WG_BUFFER_SIZE];
+                match state.tunnel.encapsulate(packet, &mut encode_buf) {
+                    TunnResult::WriteToNetwork(data) => {
+                        let copied = data.to_vec();
+                        let socket = state.endpoint_socket.try_clone()
+                            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Socket clone failed: {}", e)))?;
+                        (copied, socket)
+                    }
+                    TunnResult::Done => return Ok(()),
+                    TunnResult::Err(e) => return Err(io::Error::new(io::ErrorKind::Other, format!("Encapsulate error: {:?}", e))),
+                    _ => return Ok(()),
                 }
-                TunnResult::Done => Ok(()),
-                TunnResult::Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("Encapsulate error: {:?}", e))),
-                _ => Ok(()),
-            }
+            };
+            // State lock released here - send outside lock
+            drop(global); // Release GLOBAL_TUNNEL lock too
+            send_socket.send(&send_data)?;
+            Ok(())
         }
         None => Err(io::Error::new(io::ErrorKind::NotConnected, "WireGuard tunnel not active")),
     }

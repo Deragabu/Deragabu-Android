@@ -110,9 +110,14 @@ pub fn wg_socket_connect(host: &str, port: u16, timeout_ms: u32) -> u64 {
     // Flush the SYN packet
     proxy.flush_outgoing();
 
-    // Wait for connection establishment
+    // Wait for connection establishment with SYN retransmission
     let connect_timeout = Duration::from_millis(timeout_ms as u64);
     let start = Instant::now();
+    
+    // SYN retransmission with exponential backoff: 500ms, 1s, 2s, 4s...
+    let mut next_syn_retry = start + Duration::from_millis(500);
+    let mut syn_retry_interval = Duration::from_millis(500);
+    let max_syn_retry_interval = Duration::from_secs(4);
 
     while !proxy.virtual_stack.is_tcp_established(&conn_id) {
         let remaining = connect_timeout.saturating_sub(start.elapsed());
@@ -131,6 +136,17 @@ pub fn wg_socket_connect(host: &str, port: u16, timeout_ms: u32) -> u64 {
                 return 0;
             }
             _ => {}
+        }
+
+        // Retransmit SYN if needed (in case initial SYN was lost)
+        let now = Instant::now();
+        if now >= next_syn_retry {
+            if proxy.virtual_stack.resend_syn_if_pending(&conn_id) {
+                proxy.flush_outgoing();
+                // Exponential backoff for next retry
+                syn_retry_interval = (syn_retry_interval * 2).min(max_syn_retry_interval);
+                next_syn_retry = now + syn_retry_interval;
+            }
         }
 
         // Wait for state change notification (with short timeout for safety)
