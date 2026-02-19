@@ -41,9 +41,11 @@ import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.PictureInPictureParams;
 import android.app.Service;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
@@ -181,6 +183,17 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private String host; // Saved for WireGuard lifecycle management
     private boolean wireGuardConfigured = false; // Track if WireGuard was set up
     private boolean wireGuardStartedInCreate = false; // Prevent duplicate start from onStart
+
+    // Screen-off receiver: disconnect the game session when the screen turns off
+    private final BroadcastReceiver screenOffReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
+                Log.i(TAG, "Screen turned off, disconnecting game session");
+                finish();
+            }
+        }
+    };
 
     // Static lock and generation counter to prevent race conditions between
     // stopConnection()'s background thread and startWireGuard() in a new activity.
@@ -425,6 +438,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         wakeLock.setReferenceCounted(false);
         wakeLock.acquire();
 
+        // Register screen-off receiver to disconnect when screen turns off
+        registerReceiver(screenOffReceiver, new IntentFilter(Intent.ACTION_SCREEN_OFF));
 
         appName = Game.this.getIntent().getStringExtra(EXTRA_APP_NAME);
         pcName = Game.this.getIntent().getStringExtra(EXTRA_PC_NAME);
@@ -1065,6 +1080,13 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // startWireGuard() will also stop any existing tunnel before starting a new one,
         // so we don't need a redundant stopWireGuard() call here that could race with
         // the background thread cleanup.
+
+        // Unregister screen-off receiver
+        try {
+            unregisterReceiver(screenOffReceiver);
+        } catch (IllegalArgumentException e) {
+            // Receiver was not registered
+        }
 
         // Unregister back gesture callback
         if (onBackInvokedCallback != null) {

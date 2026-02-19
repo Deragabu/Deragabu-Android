@@ -17,6 +17,7 @@ import com.limelight.PcView;
 import com.limelight.R;
 import com.limelight.binding.PlatformBinding;
 import com.limelight.binding.wireguard.WireGuardManager;
+import com.limelight.binding.wireguard.WgSocketFactory;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvHTTP;
 import com.limelight.nvstream.http.PairingManager;
@@ -24,7 +25,21 @@ import com.limelight.nvstream.http.PairingManager.PairState;
 
 import java.io.FileNotFoundException;
 import java.net.UnknownHostException;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
+import java.util.concurrent.TimeUnit;
+
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
 
 public class PairingService extends Service {
     private static final String TAG = "PairingService";
@@ -366,14 +381,48 @@ public class PairingService extends Service {
     }
 
     /**
+     * Build an OkHttpClient that trusts all certificates and routes through WireGuard when enabled.
+     */
+    @SuppressLint("CustomX509TrustManager")
+    private OkHttpClient buildWgAwareHttpClient() {
+        @SuppressLint("TrustAllX509TrustManager")
+        X509TrustManager trustAllManager = new X509TrustManager() {
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+            public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+            public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+        };
+
+        try {
+            SSLContext sc = SSLContext.getInstance("TLS");
+            sc.init(null, new TrustManager[]{trustAllManager}, new SecureRandom());
+
+            OkHttpClient.Builder builder = new OkHttpClient.Builder()
+                    .sslSocketFactory(sc.getSocketFactory(), trustAllManager)
+                    .hostnameVerifier((hostname, session) -> true)
+                    .connectTimeout(15, TimeUnit.SECONDS)
+                    .readTimeout(15, TimeUnit.SECONDS);
+
+            // Route through WireGuard when HTTP config is active
+            if (NvHTTP.isDirectWgHttpEnabled()) {
+                builder.socketFactory(WgSocketFactory.getInstance());
+                Log.i(TAG, "Sunshine API using WireGuard routing via WgSocketFactory");
+            }
+
+            return builder.build();
+        } catch (NoSuchAlgorithmException | KeyManagementException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /**
      * Verify Sunshine credentials by calling a simple API endpoint
      *
      * @return HTTP response code (200 = success, 401 = auth failed, -2 = endpoint not found, -1 = error)
      */
-    @SuppressLint("CustomX509TrustManager")
     private int verifySunshineCredentials(String computerAddress, String username, String password) {
         Log.i(TAG, ">>> verifySunshineCredentials CALLED: address=" + computerAddress);
-        javax.net.ssl.HttpsURLConnection connection = null;
         try {
             // Build URL for Sunshine API - use /api/apps as a simple endpoint to verify auth
             String host = computerAddress;
@@ -382,77 +431,43 @@ public class PairingService extends Service {
             }
             String url = "https://" + host + ":47990/api/apps";
 
-            Log.i(TAG, "Verifying Sunshine credentials: " + url);
+            Log.i(TAG, "Verifying Sunshine credentials: " + url + ", wgProxyStarted=" + wgProxyStarted);
 
             // Create Basic Auth header
             String credentials = username + ":" + password;
             String basicAuth = "Basic " + android.util.Base64.encodeToString(
                     credentials.getBytes(java.nio.charset.StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
 
-            // Create trust manager that accepts all certificates (for self-signed Sunshine certs)
-            javax.net.ssl.TrustManager[] trustAllCerts = new javax.net.ssl.TrustManager[]{
-                    new javax.net.ssl.X509TrustManager() {
-                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-                            return new java.security.cert.X509Certificate[0];
-                        }
+            OkHttpClient client = buildWgAwareHttpClient();
+            Request request = new Request.Builder()
+                    .url(url)
+                    .get()
+                    .header("Authorization", basicAuth)
+                    .header("Accept", "*/*")
+                    .build();
 
-                        @SuppressLint("TrustAllX509TrustManager")
-                        public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {
-                        }
+            try (Response response = client.newCall(request).execute()) {
+                int responseCode = response.code();
+                Log.i(TAG, "Sunshine credentials verification response code: " + responseCode);
 
-                        @SuppressLint("TrustAllX509TrustManager")
-                        public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {
-                        }
-                    }
-            };
-
-            // Create SSL context with trust-all manager
-            javax.net.ssl.SSLContext sslContext = javax.net.ssl.SSLContext.getInstance("TLS");
-            sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
-            javax.net.ssl.SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
-            javax.net.ssl.HostnameVerifier trustAllHostnames = (hostname, session) -> true;
-
-            java.net.URL apiUrl = new java.net.URL(url);
-            Log.i(TAG, "verifySunshineCredentials: URL=" + url + ", wgProxyStarted=" + wgProxyStarted);
-
-            connection = (javax.net.ssl.HttpsURLConnection) apiUrl.openConnection();
-            Log.i(TAG, "verifySunshineCredentials: connecting to " + apiUrl.toString());
-
-            connection.setSSLSocketFactory(sslSocketFactory);
-            connection.setHostnameVerifier(trustAllHostnames);
-
-            connection.setRequestMethod("GET");
-            connection.setRequestProperty("Authorization", basicAuth);
-            connection.setRequestProperty("Accept", "*/*");
-            connection.setConnectTimeout(15000);
-            connection.setReadTimeout(15000);
-
-            int responseCode = connection.getResponseCode();
-            Log.i(TAG, "Sunshine credentials verification response code: " + responseCode);
-
-            if (responseCode == 200) {
-                return 200;
-            } else if (responseCode == 401) {
-                Log.w(TAG, "Sunshine authentication failed (401)");
-                return 401;
-            } else if (responseCode == 404) {
-                // Endpoint not found - older Sunshine version, proceed with pairing
-                Log.i(TAG, "API endpoint not found, proceeding with pairing");
-                return -2;
-            } else {
-                return responseCode;
+                if (responseCode == 200) {
+                    return 200;
+                } else if (responseCode == 401) {
+                    Log.w(TAG, "Sunshine authentication failed (401)");
+                    return 401;
+                } else if (responseCode == 404) {
+                    Log.i(TAG, "API endpoint not found, proceeding with pairing");
+                    return -2;
+                } else {
+                    return responseCode;
+                }
             }
         } catch (java.io.FileNotFoundException e) {
-            // 404 - endpoint not found
             Log.i(TAG, "API endpoint not found (FileNotFoundException), proceeding with pairing");
             return -2;
         } catch (Exception e) {
             Log.e(TAG, "Failed to verify Sunshine credentials: " + e.getMessage(), e);
             return -1;
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
         }
     }
 
@@ -463,7 +478,6 @@ public class PairingService extends Service {
      */
     private int sendPinToSunshine(String computerAddress, String username, String password,
                                       String pin, String deviceName) {
-        javax.net.ssl.HttpsURLConnection connection = null;
         try {
             // Build URL for Sunshine API
             String host = computerAddress;
@@ -472,8 +486,7 @@ public class PairingService extends Service {
             }
             String url = "https://" + host + ":47990/api/pin";
 
-            //LimeLog.info("Sending PIN to Sunshine API: " + url);
-            Log.i(TAG, "Sending PIN to Sunshine API: " + url);
+            Log.i(TAG, "Sending PIN to Sunshine API: " + url + ", wgProxyStarted=" + wgProxyStarted);
 
             // Create JSON payload
             org.json.JSONObject jsonPayload = new org.json.JSONObject();
@@ -485,98 +498,48 @@ public class PairingService extends Service {
             String basicAuth = "Basic " + android.util.Base64.encodeToString(
                     credentials.getBytes(java.nio.charset.StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
 
-            // Create trust manager that accepts all certificates (for self-signed Sunshine certs)
-            @SuppressLint("CustomX509TrustManager") javax.net.ssl.TrustManager[] trustAllCerts = new javax.net.ssl.TrustManager[]{
-                    new javax.net.ssl.X509TrustManager() {
-                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-                            return new java.security.cert.X509Certificate[0];
-                        }
+            OkHttpClient client = buildWgAwareHttpClient().newBuilder()
+                    .readTimeout(30, TimeUnit.SECONDS)
+                    .build();
 
-                        @SuppressLint("TrustAllX509TrustManager")
-                        public void checkClientTrusted(java.security.cert.X509Certificate[] certs, String authType) {
-                        }
+            RequestBody body = RequestBody.create(
+                    jsonPayload.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                    MediaType.parse("application/json; charset=utf-8"));
 
-                        @SuppressLint("TrustAllX509TrustManager")
-                        public void checkServerTrusted(java.security.cert.X509Certificate[] certs, String authType) {
-                        }
+            Request request = new Request.Builder()
+                    .url(url)
+                    .post(body)
+                    .header("Authorization", basicAuth)
+                    .header("Accept", "*/*")
+                    .build();
+
+            try (Response response = client.newCall(request).execute()) {
+                int responseCode = response.code();
+                Log.i(TAG, "Sunshine API response code: " + responseCode);
+
+                if (responseCode == 200) {
+                    return 200;
+                } else if (responseCode == 401) {
+                    Log.w(TAG, "Sunshine API authentication failed (401)");
+                    return 401;
+                } else {
+                    // Log error body if available
+                    if (response.body() != null) {
+                        String errorBody = response.body().string();
+                        Log.w(TAG, "Sunshine API error response: " + errorBody);
                     }
-            };
-
-            // Create SSL context with trust-all manager
-            javax.net.ssl.SSLContext sslContext = javax.net.ssl.SSLContext.getInstance("TLS");
-            sslContext.init(null, trustAllCerts, new java.security.SecureRandom());
-            javax.net.ssl.SSLSocketFactory sslSocketFactory = sslContext.getSocketFactory();
-            javax.net.ssl.HostnameVerifier trustAllHostnames = (hostname, session) -> true;
-
-            java.net.URL apiUrl = new java.net.URL(url);
-            Log.i(TAG, "sendPinToSunshine: URL=" + url + ", wgProxyStarted=" + wgProxyStarted);
-
-            connection = (javax.net.ssl.HttpsURLConnection) apiUrl.openConnection();
-
-            // Set SSL configuration on the connection (not globally)
-            connection.setSSLSocketFactory(sslSocketFactory);
-            connection.setHostnameVerifier(trustAllHostnames);
-
-            connection.setRequestMethod("POST");
-            connection.setRequestProperty("Authorization", basicAuth);
-            connection.setRequestProperty("Content-Type", "application/json");
-            connection.setRequestProperty("Accept", "*/*");
-            connection.setDoOutput(true);
-            connection.setConnectTimeout(15000);
-            connection.setReadTimeout(30000);
-
-            // Send request
-            byte[] input = jsonPayload.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            try (java.io.OutputStream os = connection.getOutputStream()) {
-                os.write(input, 0, input.length);
-                os.flush();
-            }
-
-            int responseCode = connection.getResponseCode();
-            //LimeLog.info("Sunshine API response code: " + responseCode);
-            Log.i(TAG, "Sunshine API response code: " + responseCode);
-            // 200 OK means PIN was accepted
-            if (responseCode == 200) {
-                return 200;
-            } else if (responseCode == 401) {
-                //LimeLog.warning("Sunshine API authentication failed (401)");
-                Log.w(TAG, "Sunshine API authentication failed (401)");
-                return 401;
-            } else {
-                // Try to read error message
-                java.io.InputStream errorStream = connection.getErrorStream();
-                if (errorStream != null) {
-                    try (java.io.BufferedReader br = new java.io.BufferedReader(
-                            new java.io.InputStreamReader(errorStream, java.nio.charset.StandardCharsets.UTF_8))) {
-                        StringBuilder response = new StringBuilder();
-                        String line;
-                        while ((line = br.readLine()) != null) {
-                            response.append(line);
-                        }
-                        //LimeLog.warning("Sunshine API error response: " + response);
-                        Log.w(TAG, "Sunshine API error response: " + response);
-                    }
+                    return responseCode;
                 }
-                return responseCode;
             }
         } catch (javax.net.ssl.SSLHandshakeException e) {
-            /*LimeLog.warning("SSL Handshake failed: " + e.getMessage());
-            LimeLog.warning("Stack trace: " + android.util.Log.getStackTraceString(e));*/
             Log.e(TAG, "SSL Handshake failed: " + e.getMessage(), e);
             return -1;
         } catch (java.net.SocketTimeoutException e) {
-            //LimeLog.warning("Connection timeout: " + e.getMessage());
             Log.w(TAG, "Connection timeout: " + e.getMessage(), e);
             return -1;
         } catch (Exception e) {
-            /*imeLog.warning("Failed to send PIN to Sunshine: " + e.getMessage());
-            LimeLog.warning("Stack trace: " + android.util.Log.getStackTraceString(e));*/
             Log.e(TAG, "Failed to send PIN to Sunshine: " + e.getMessage(), e);
             return -1;
-        } finally {
-            if (connection != null) {
-                connection.disconnect();
-            }
         }
     }
 
