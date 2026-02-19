@@ -313,6 +313,7 @@ impl WireGuardTunnel {
                         let protocol = data[9];
                         if protocol == 6 {
                             // TCP packet - forward to HTTP shared proxy's virtual stack
+                            debug!("WG TCP received: {} bytes, injecting to HTTP proxy", data.len());
                             crate::wg_http::wg_http_inject_packet(data);
                         } else if protocol == 17 {
                             // UDP packet - deliver via zero-copy channel

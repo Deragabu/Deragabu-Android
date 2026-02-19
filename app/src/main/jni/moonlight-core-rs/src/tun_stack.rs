@@ -478,11 +478,16 @@ impl VirtualStack {
             remote_port: tcp_header.source_port,
         };
 
+        info!("process_tcp_packet: {}:{} -> {}:{}, flags: SYN={}, ACK={}, FIN={}, RST={}",
+            src_ip, tcp_header.source_port, dst_ip, tcp_header.destination_port,
+            tcp_header.syn, tcp_header.ack, tcp_header.fin, tcp_header.rst);
+
         // Process packet while holding lock, determine action to take
         let action = {
             let mut conns = self.tcp_connections.lock();
 
             if let Some(tcb) = conns.get_mut(&conn_id) {
+                info!("process_tcp_packet: found connection, state={:?}", tcb.state);
                 match tcb.state {
                     TcpState::SynSent => {
                         if tcp_header.syn && tcp_header.ack {
@@ -786,6 +791,8 @@ impl VirtualStack {
                     _ => TcpPacketAction::None,
                 }
             } else {
+                warn!("process_tcp_packet: no connection found for {}:{} -> {}:{}",
+                      src_ip, tcp_header.source_port, dst_ip, tcp_header.destination_port);
                 if !tcp_header.rst {
                     // Send RST to inform remote side this connection doesn't exist.
                     // This stops retransmissions and cleans up server-side state.
