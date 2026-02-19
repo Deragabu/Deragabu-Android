@@ -1310,11 +1310,21 @@ pub extern "C" fn Java_com_limelight_binding_wireguard_WireGuardManager_nativeSt
         }
     };
 
-    // Parse endpoint
-    let endpoint_addr: std::net::SocketAddr = match endpoint_str.parse() {
-        Ok(addr) => addr,
+    // Parse endpoint (supports both IP:port and hostname:port via DNS resolution)
+    use std::net::ToSocketAddrs;
+    let endpoint_addr: std::net::SocketAddr = match endpoint_str.to_socket_addrs() {
+        Ok(mut addrs) => match addrs.next() {
+            Some(addr) => {
+                info!("nativeStartTunnel: resolved endpoint '{}' -> {}", endpoint_str, addr);
+                addr
+            }
+            None => {
+                error!("nativeStartTunnel: DNS resolution returned no addresses for '{}'", endpoint_str);
+                return JNI_FALSE;
+            }
+        },
         Err(e) => {
-            error!("nativeStartTunnel: invalid endpoint format '{}': {}", endpoint_str, e);
+            error!("nativeStartTunnel: failed to resolve endpoint '{}': {}", endpoint_str, e);
             return JNI_FALSE;
         }
     };
@@ -1509,11 +1519,21 @@ pub extern "C" fn Java_com_limelight_binding_wireguard_WireGuardManager_nativeHt
         }
     };
 
-    // Parse endpoint
-    let endpoint_addr: std::net::SocketAddr = match endpoint_str.parse() {
-        Ok(addr) => addr,
+    // Parse endpoint (supports both IP:port and hostname:port via DNS resolution)
+    use std::net::ToSocketAddrs;
+    let endpoint_addr: std::net::SocketAddr = match endpoint_str.to_socket_addrs() {
+        Ok(mut addrs) => match addrs.next() {
+            Some(addr) => {
+                info!("nativeHttpSetConfig: resolved endpoint '{}' -> {}", endpoint_str, addr);
+                addr
+            }
+            None => {
+                error!("nativeHttpSetConfig: DNS resolution returned no addresses for '{}'", endpoint_str);
+                return JNI_FALSE;
+            }
+        },
         Err(e) => {
-            error!("nativeHttpSetConfig: invalid endpoint format '{}': {}", endpoint_str, e);
+            error!("nativeHttpSetConfig: failed to resolve endpoint '{}': {}", endpoint_str, e);
             return JNI_FALSE;
         }
     };

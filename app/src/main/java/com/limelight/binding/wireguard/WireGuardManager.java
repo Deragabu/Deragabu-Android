@@ -3,8 +3,6 @@ package com.limelight.binding.wireguard;
 import android.util.Base64;
 import android.util.Log;
 
-import java.net.InetAddress;
-
 /**
  * WireGuard tunnel manager that interfaces with the Rust native library.
  * Provides methods for configuring and managing the WireGuard VPN tunnel
@@ -167,20 +165,12 @@ public class WireGuardManager {
         }
 
         try {
-            // Parse endpoint
-            String[] parts = config.endpoint.split(":");
-            String host = parts[0];
-            int port = Integer.parseInt(parts[1]);
-
-            // Resolve hostname
-            InetAddress addr = InetAddress.getByName(host);
-            String resolvedEndpoint = addr.getHostAddress() + ":" + port;
-
+            // Pass endpoint directly to Rust layer which handles DNS resolution
             boolean result = nativeStartTunnel(
                 config.privateKey,
                 config.peerPublicKey,
                 config.presharedKey,
-                resolvedEndpoint,
+                config.endpoint,
                 config.tunnelAddress,
                 config.keepaliveSecs,
                 config.mtu
@@ -343,20 +333,12 @@ public class WireGuardManager {
         }
 
         try {
-            // Parse endpoint
-            String[] parts = config.endpoint.split(":");
-            String host = parts[0];
-            int port = Integer.parseInt(parts[1]);
-
-            // Resolve hostname
-            java.net.InetAddress addr = java.net.InetAddress.getByName(host);
-            String resolvedEndpoint = addr.getHostAddress() + ":" + port;
-
+            // Pass endpoint directly to Rust layer which handles DNS resolution
             boolean result = nativeHttpSetConfig(
                 config.privateKey,
                 config.peerPublicKey,
                 config.presharedKey,
-                resolvedEndpoint,
+                config.endpoint,
                 config.tunnelAddress,
                 serverAddress,
                 config.keepaliveSecs,
