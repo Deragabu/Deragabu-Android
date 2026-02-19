@@ -223,11 +223,15 @@ impl WireGuardTunnel {
         let target = target_addr;
         let client_addr_tracker = Arc::new(Mutex::new(None::<SocketAddr>));
         let client_addr_for_loop = client_addr_tracker.clone();
+        let tun_ip = match self.config.tunnel_address {
+            IpAddr::V4(ip) => ip,
+            _ => Ipv4Addr::new(10, 0, 0, 2),
+        };
         
         thread::Builder::new()
             .name(format!("wg-udp-fwd-{}", local_addr.port()))
             .spawn(move || {
-                Self::udp_proxy_forward_loop(state, running, proxy_recv, target, client_addr_for_loop);
+                Self::udp_proxy_forward_loop(state, running, proxy_recv, target, client_addr_for_loop, tun_ip);
             })?;
 
         // Register the proxy for reverse traffic (WireGuard -> local)
@@ -296,11 +300,15 @@ impl WireGuardTunnel {
 
             let client_addr_tracker = Arc::new(Mutex::new(None::<SocketAddr>));
             let client_addr_for_loop = client_addr_tracker.clone();
+            let tun_ip = match self.config.tunnel_address {
+                IpAddr::V4(ip) => ip,
+                _ => Ipv4Addr::new(10, 0, 0, 2),
+            };
 
             if let Err(e) = thread::Builder::new()
                 .name(format!("wg-udp-stream-{}", port))
                 .spawn(move || {
-                    Self::udp_proxy_forward_loop(state, running, proxy_recv, target, client_addr_for_loop);
+                    Self::udp_proxy_forward_loop(state, running, proxy_recv, target, client_addr_for_loop, tun_ip);
                 }) {
                 error!("Failed to spawn UDP proxy thread for port {}: {}", port, e);
                 continue;
@@ -451,11 +459,16 @@ impl WireGuardTunnel {
                         } else if protocol == 17 {
                             // UDP packet - try zero-copy channel first, then proxy fallback
                             if let Some((src_port, dst_port, payload)) = parse_udp_from_ip_packet(data) {
+                                debug!("WG UDP received: src_port={}, dst_port={}, payload_len={}", src_port, dst_port, payload.len());
                                 // Try zero-copy delivery via platform_sockets channel
                                 if crate::platform_sockets::try_push_udp_data(src_port, payload) {
+                                    debug!("WG UDP: delivered via zero-copy channel (src_port={})", src_port);
                                     // Data delivered via zero-copy channel, skip proxy
+                                } else if crate::platform_sockets::try_inject_udp_data(src_port, payload) {
+                                    debug!("WG UDP: delivered via loopback injection (src_port={})", src_port);
+                                    // Data delivered via loopback injection (ENet etc.)
                                 } else {
-                                    // No zero-copy channel, use proxy fallback
+                                    // No zero-copy channel or inject socket, use proxy fallback
                                     let proxies = udp_proxies.lock();
                                     if let Some(proxy) = proxies.get(&src_port) {
                                         let client = proxy.client_addr.lock();
@@ -493,6 +506,7 @@ impl WireGuardTunnel {
         proxy_socket: UdpSocket,
         target_addr: SocketAddr,
         client_addr_tracker: Arc<Mutex<Option<SocketAddr>>>,
+        tunnel_ip: Ipv4Addr,
     ) {
         let mut recv_buf = vec![0u8; MAX_UDP_PACKET_SIZE];
         let mut dst_buf = vec![0u8; WG_BUFFER_SIZE];
@@ -527,7 +541,7 @@ impl WireGuardTunnel {
 
             // Build IP/UDP packet and encapsulate through WireGuard
             let src_socket_addr = SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), // Our tunnel IP  
+                IpAddr::V4(tunnel_ip),
                 src_addr.port()
             );
             let ip_packet = build_udp_ip_packet(src_socket_addr, target_addr, &recv_buf[..n]);

@@ -18,8 +18,15 @@
 /* Redirect sendto to WG-aware implementation.
  * wg_sendto checks if the socket is WG-tracked and the destination
  * is the WG server; if so, encapsulates directly through WireGuard.
- * Otherwise, falls through to the real libc sendto. */
+ * For unregistered sockets (e.g., ENet), auto-registers them for
+ * inject-mode delivery. Otherwise, falls through to real libc sendto. */
 #define sendto(s,b,l,f,a,al) wg_sendto(s,b,l,f,a,al)
+
+/* Redirect recvfrom to WG-aware implementation.
+ * For inject-mode sockets (e.g., ENet), fixes the source address from
+ * localhost (injected) to the actual WG server address.
+ * Otherwise, falls through to real libc recvfrom. */
+#define recvfrom(s,b,l,f,a,al) wg_recvfrom(s,b,l,f,a,al)
 
 /* ============================================================================
  * TCP interception

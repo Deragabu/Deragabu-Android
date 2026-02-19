@@ -61,12 +61,16 @@ struct TcpControlBlock {
     max_reorder_buffer_bytes: usize,
     /// Current reorder buffer size in bytes
     reorder_buffer_bytes: usize,
+    /// Pending FIN: when a FIN arrives out-of-order (seq > local_ack),
+    /// we record its effective sequence number here and defer processing
+    /// until all preceding data has been received.
+    pending_fin_seq: Option<u32>,
 }
 
 /// Action to perform after processing a TCP packet (outside the lock)
 enum TcpPacketAction {
     SendAck { seq: u32, ack: u32 },
-    SendFinAck { seq: u32, ack: u32 },
+    SendFinAck { seq: u32, ack: u32, tx: mpsc::SyncSender<Vec<u8>> },
     SendData {
         seq: u32,
         ack: u32,
@@ -80,9 +84,19 @@ enum TcpPacketAction {
         data_segments: Vec<Vec<u8>>,
         tx: mpsc::SyncSender<Vec<u8>>,
     },
+    /// Deliver buffered data segments, then send FIN-ACK and signal EOF
+    /// Used when FIN is received while there is buffered reorder data
+    SendDataThenFinAck {
+        seq: u32,
+        ack: u32,
+        data_segments: Vec<Vec<u8>>,
+        tx: mpsc::SyncSender<Vec<u8>>,
+    },
     /// Out-of-order segment buffered, send duplicate ACK
     BufferedOutOfOrder { seq: u32, ack: u32 },
     ConnectionEstablished { seq: u32, ack: u32 },
+    /// Signal EOF to the application (e.g., on RST or unexpected close)
+    SignalEof { tx: mpsc::SyncSender<Vec<u8>> },
     None,
 }
 
@@ -173,6 +187,7 @@ impl VirtualStack {
             reorder_buffer: BTreeMap::new(),
             max_reorder_buffer_bytes: 256 * 1024, // 256KB max buffer
             reorder_buffer_bytes: 0,
+            pending_fin_seq: None,
         };
 
         {
@@ -199,10 +214,10 @@ impl VirtualStack {
                 io::Error::new(io::ErrorKind::NotConnected, "Connection not found")
             })?;
 
-            if tcb.state != TcpState::Established {
+            if tcb.state != TcpState::Established && tcb.state != TcpState::CloseWait {
                 return Err(io::Error::new(
                     io::ErrorKind::NotConnected,
-                    "Connection not established",
+                    "Connection not in a sendable state",
                 ));
             }
 
@@ -236,11 +251,19 @@ impl VirtualStack {
         let (seq, ack) = {
             let mut conns = self.tcp_connections.lock();
             if let Some(tcb) = conns.get_mut(conn_id) {
-                if tcb.state == TcpState::Established || tcb.state == TcpState::CloseWait {
-                    tcb.state = TcpState::FinWait1;
-                    (tcb.local_seq, tcb.local_ack)
-                } else {
-                    return Ok(());
+                match tcb.state {
+                    TcpState::Established => {
+                        // Active close: we initiate FIN
+                        tcb.state = TcpState::FinWait1;
+                        (tcb.local_seq, tcb.local_ack)
+                    }
+                    TcpState::CloseWait => {
+                        // Passive close: server already FIN'd, now we FIN too
+                        // Next state is LastAck (waiting for ACK of our FIN)
+                        tcb.state = TcpState::LastAck;
+                        (tcb.local_seq, tcb.local_ack)
+                    }
+                    _ => return Ok(()),
                 }
             } else {
                 return Ok(());
@@ -372,41 +395,81 @@ impl VirtualStack {
                     }
                     TcpState::Established => {
                         tcb.last_activity = Instant::now();
-                        if tcp_header.fin {
-                            // Remote closing - first deliver any buffered data
-                            let mut segments = Vec::new();
-                            while let Some(entry) = tcb.reorder_buffer.first_entry() {
-                                if *entry.key() == tcb.local_ack {
-                                    let data = entry.remove();
-                                    tcb.local_ack = tcb.local_ack.wrapping_add(data.len() as u32);
-                                    tcb.reorder_buffer_bytes -= data.len();
-                                    segments.push(data);
-                                } else {
-                                    break;
-                                }
-                            }
-                            tcb.state = TcpState::CloseWait;
-                            tcb.local_ack = tcp_header.sequence_number.wrapping_add(1);
-                            
-                            if !segments.is_empty() {
-                                // Deliver buffered data before FIN
-                                TcpPacketAction::SendMultipleData {
-                                    seq: tcb.local_seq,
-                                    ack: tcb.local_ack,
-                                    data_segments: segments,
-                                    tx: tcb.tx_to_app.clone(),
-                                }
-                            } else {
-                                TcpPacketAction::SendFinAck {
-                                    seq: tcb.local_seq,
-                                    ack: tcb.local_ack,
-                                }
-                            }
-                        } else if tcp_header.rst {
+                        if tcp_header.rst {
                             tcb.state = TcpState::Closed;
                             tcb.last_activity = Instant::now();
                             warn!("Connection reset by peer");
-                            TcpPacketAction::None
+                            TcpPacketAction::SignalEof { tx: tcb.tx_to_app.clone() }
+                        } else if tcp_header.fin {
+                            // FIN received - compute where the FIN sits in the sequence space
+                            // FIN consumes one seq after any payload
+                            let fin_seq = tcp_header.sequence_number
+                                .wrapping_add(tcp_payload.len() as u32);
+                            let seq_diff = tcp_header.sequence_number
+                                .wrapping_sub(tcb.local_ack) as i32;
+
+                            if seq_diff <= 0 {
+                                // In-order (or duplicate) FIN
+                                // Deliver any payload from this FIN packet
+                                let mut segments = Vec::new();
+                                if !tcp_payload.is_empty() && seq_diff == 0 {
+                                    tcb.local_ack = tcb.local_ack
+                                        .wrapping_add(tcp_payload.len() as u32);
+                                    segments.push(tcp_payload.to_vec());
+                                }
+                                // Flush contiguous reorder buffer
+                                while let Some(entry) = tcb.reorder_buffer.first_entry() {
+                                    if *entry.key() == tcb.local_ack {
+                                        let data = entry.remove();
+                                        tcb.local_ack = tcb.local_ack
+                                            .wrapping_add(data.len() as u32);
+                                        tcb.reorder_buffer_bytes -= data.len();
+                                        segments.push(data);
+                                    } else {
+                                        break;
+                                    }
+                                }
+                                tcb.state = TcpState::CloseWait;
+                                tcb.local_ack = fin_seq.wrapping_add(1); // ACK the FIN
+
+                                if !segments.is_empty() {
+                                    TcpPacketAction::SendDataThenFinAck {
+                                        seq: tcb.local_seq,
+                                        ack: tcb.local_ack,
+                                        data_segments: segments,
+                                        tx: tcb.tx_to_app.clone(),
+                                    }
+                                } else {
+                                    TcpPacketAction::SendFinAck {
+                                        seq: tcb.local_seq,
+                                        ack: tcb.local_ack,
+                                        tx: tcb.tx_to_app.clone(),
+                                    }
+                                }
+                            } else {
+                                // Out-of-order FIN (arrives before preceding data)
+                                debug!("Out-of-order FIN seq={} (expected={}), deferring",
+                                       tcp_header.sequence_number, tcb.local_ack);
+                                tcb.pending_fin_seq = Some(fin_seq);
+
+                                // Buffer any data payload from the FIN packet
+                                if !tcp_payload.is_empty() {
+                                    let data = tcp_payload.to_vec();
+                                    if tcb.reorder_buffer_bytes + data.len()
+                                        <= tcb.max_reorder_buffer_bytes
+                                    {
+                                        tcb.reorder_buffer_bytes += data.len();
+                                        tcb.reorder_buffer
+                                            .insert(tcp_header.sequence_number, data);
+                                    }
+                                }
+
+                                // Send duplicate ACK for what we have so far
+                                TcpPacketAction::BufferedOutOfOrder {
+                                    seq: tcb.local_seq,
+                                    ack: tcb.local_ack,
+                                }
+                            }
                         } else if !tcp_payload.is_empty() {
                             // Data received - check if it's in sequence
                             let pkt_seq = tcp_header.sequence_number;
@@ -442,7 +505,39 @@ impl VirtualStack {
                                     }
                                 }
                                 
-                                if segments.len() == 1 {
+                                // Check if a pending out-of-order FIN is now in sequence
+                                if let Some(fin_seq) = tcb.pending_fin_seq {
+                                    if tcb.local_ack == fin_seq {
+                                        // All data before FIN received - process the FIN now
+                                        info!("Pending FIN now in-order at seq={}", fin_seq);
+                                        tcb.pending_fin_seq = None;
+                                        tcb.state = TcpState::CloseWait;
+                                        tcb.local_ack = fin_seq.wrapping_add(1);
+                                        TcpPacketAction::SendDataThenFinAck {
+                                            seq: tcb.local_seq,
+                                            ack: tcb.local_ack,
+                                            data_segments: segments,
+                                            tx: tcb.tx_to_app.clone(),
+                                        }
+                                    } else {
+                                        // Still waiting for more data before the FIN
+                                        if segments.len() == 1 {
+                                            TcpPacketAction::SendData {
+                                                seq: tcb.local_seq,
+                                                ack: tcb.local_ack,
+                                                data: segments.pop().unwrap(),
+                                                tx: tcb.tx_to_app.clone(),
+                                            }
+                                        } else {
+                                            TcpPacketAction::SendMultipleData {
+                                                seq: tcb.local_seq,
+                                                ack: tcb.local_ack,
+                                                data_segments: segments,
+                                                tx: tcb.tx_to_app.clone(),
+                                            }
+                                        }
+                                    }
+                                } else if segments.len() == 1 {
                                     TcpPacketAction::SendData {
                                         seq: tcb.local_seq,
                                         ack: tcb.local_ack,
@@ -488,10 +583,16 @@ impl VirtualStack {
                     }
                     TcpState::FinWait1 => {
                         tcb.last_activity = Instant::now();
-                        if tcp_header.fin && tcp_header.ack {
+                        if tcp_header.rst {
+                            tcb.state = TcpState::Closed;
+                            TcpPacketAction::None
+                        } else if tcp_header.fin && tcp_header.ack {
                             tcb.state = TcpState::TimeWait;
-                            tcb.local_ack =
-                                tcp_header.sequence_number.wrapping_add(1);
+                            // Account for any data payload + the FIN sequence number
+                            tcb.local_ack = tcp_header
+                                .sequence_number
+                                .wrapping_add(tcp_payload.len() as u32)
+                                .wrapping_add(1);
                             TcpPacketAction::SendAck {
                                 seq: tcb.local_seq,
                                 ack: tcb.local_ack,
@@ -505,10 +606,16 @@ impl VirtualStack {
                     }
                     TcpState::FinWait2 => {
                         tcb.last_activity = Instant::now();
-                        if tcp_header.fin {
+                        if tcp_header.rst {
+                            tcb.state = TcpState::Closed;
+                            TcpPacketAction::None
+                        } else if tcp_header.fin {
                             tcb.state = TcpState::TimeWait;
-                            tcb.local_ack =
-                                tcp_header.sequence_number.wrapping_add(1);
+                            // Account for any data payload + the FIN sequence number
+                            tcb.local_ack = tcp_header
+                                .sequence_number
+                                .wrapping_add(tcp_payload.len() as u32)
+                                .wrapping_add(1);
                             TcpPacketAction::SendAck {
                                 seq: tcb.local_seq,
                                 ack: tcb.local_ack,
@@ -519,6 +626,9 @@ impl VirtualStack {
                     }
                     TcpState::CloseWait => {
                         tcb.last_activity = Instant::now();
+                        if tcp_header.rst {
+                            tcb.state = TcpState::Closed;
+                        }
                         // In CloseWait, we haven't sent our FIN yet, just waiting for app to close
                         TcpPacketAction::None
                     }
@@ -531,6 +641,18 @@ impl VirtualStack {
                         }
                         TcpPacketAction::None
                     }
+                    TcpState::TimeWait => {
+                        tcb.last_activity = Instant::now();
+                        // Re-ACK retransmitted FINs to help remote complete teardown
+                        if tcp_header.fin {
+                            TcpPacketAction::SendAck {
+                                seq: tcb.local_seq,
+                                ack: tcb.local_ack,
+                            }
+                        } else {
+                            TcpPacketAction::None
+                        }
+                    }
                     _ => TcpPacketAction::None,
                 }
             } else {
@@ -542,6 +664,39 @@ impl VirtualStack {
                         dst_ip,
                         tcp_header.destination_port
                     );
+                    // Send RST to inform remote side this connection doesn't exist.
+                    // This stops retransmissions and cleans up server-side state.
+                    let orphan_id = TcpConnectionId {
+                        local_addr: dst_ip,
+                        local_port: tcp_header.destination_port,
+                        remote_addr: src_ip,
+                        remote_port: tcp_header.source_port,
+                    };
+                    if tcp_header.ack {
+                        // If incoming has ACK, use its ack number as our seq
+                        self.send_tcp_packet(
+                            &orphan_id,
+                            tcp_header.acknowledgment_number,
+                            0,
+                            TcpFlags::RST,
+                            &[],
+                        );
+                    } else {
+                        // Otherwise, send RST+ACK
+                        let ack_num = tcp_header
+                            .sequence_number
+                            .wrapping_add(tcp_payload.len() as u32)
+                            .wrapping_add(
+                                if tcp_header.syn || tcp_header.fin { 1 } else { 0 },
+                            );
+                        self.send_tcp_packet(
+                            &orphan_id,
+                            0,
+                            ack_num,
+                            TcpFlags::RST | TcpFlags::ACK,
+                            &[],
+                        );
+                    }
                 }
                 TcpPacketAction::None
             }
@@ -552,23 +707,13 @@ impl VirtualStack {
             TcpPacketAction::SendAck { seq, ack } => {
                 self.send_tcp_packet(&conn_id, seq, ack, TcpFlags::ACK, &[]);
             }
-            TcpPacketAction::SendFinAck { seq, ack } => {
-                // ACK the FIN
+            TcpPacketAction::SendFinAck { seq, ack, tx } => {
+                // ACK the FIN from remote
                 self.send_tcp_packet(&conn_id, seq, ack, TcpFlags::ACK, &[]);
-                // Send our own FIN
-                self.send_tcp_packet(
-                    &conn_id,
-                    seq,
-                    ack,
-                    TcpFlags::FIN | TcpFlags::ACK,
-                    &[],
-                );
-                // Transition to LastAck - we've sent our FIN, waiting for final ACK
-                let mut conns = self.tcp_connections.lock();
-                if let Some(tcb) = conns.get_mut(&conn_id) {
-                    tcb.state = TcpState::LastAck;
-                    tcb.last_activity = Instant::now();
-                }
+                // Signal EOF to the application so recv() returns immediately.
+                // Stay in CloseWait - our FIN will be sent when the app calls tcp_close.
+                // This supports half-close: the app can still send data before closing.
+                let _ = tx.send(Vec::new());
             }
             TcpPacketAction::SendData { seq, ack, data, tx } => {
                 // ACK the data
@@ -600,9 +745,28 @@ impl VirtualStack {
                     }
                 }
             }
+            TcpPacketAction::SendDataThenFinAck { seq, ack, data_segments, tx } => {
+                // ACK all the data + FIN from remote
+                self.send_tcp_packet(&conn_id, seq, ack, TcpFlags::ACK, &[]);
+                // Forward all segments to application in order
+                for data in data_segments {
+                    if tx.send(data).is_err() {
+                        warn!("TCP data channel disconnected for {:?}", conn_id);
+                        break;
+                    }
+                }
+                // Signal EOF - remote has closed its end.
+                // Stay in CloseWait - our FIN will be sent when the app calls tcp_close.
+                // This supports half-close: the app can still send data before closing.
+                let _ = tx.send(Vec::new());
+            }
             TcpPacketAction::BufferedOutOfOrder { seq, ack } => {
                 // Send duplicate ACK to indicate gap (triggers fast retransmit on sender)
                 self.send_tcp_packet(&conn_id, seq, ack, TcpFlags::ACK, &[]);
+            }
+            TcpPacketAction::SignalEof { tx } => {
+                // Signal EOF to the application (connection was reset)
+                let _ = tx.send(Vec::new());
             }
             TcpPacketAction::ConnectionEstablished { seq, ack } => {
                 // Send ACK to complete 3-way handshake

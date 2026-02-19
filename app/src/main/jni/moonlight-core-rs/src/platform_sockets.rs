@@ -97,6 +97,31 @@ static WG_PORT_SENDERS: LazyLock<Mutex<HashMap<u16, SyncSender<Vec<u8>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 // ============================================================================
+// Inject-mode socket tracking (for ENet and other direct socket() callers)
+// ============================================================================
+
+/// Info for auto-registered inject-mode sockets.
+/// These sockets were created directly (e.g., by ENet) rather than via bindUdpSocket.
+/// Incoming WG data is injected to the real socket via loopback sendto.
+#[derive(Clone, Copy)]
+struct WgInjectSocketInfo {
+    local_port: u16,
+    remote_ip: Ipv4Addr,
+    remote_port: u16,
+}
+
+/// Map from socket FD → inject info (for recvfrom address fixup)
+static WG_INJECT_SOCKETS: LazyLock<Mutex<HashMap<i32, WgInjectSocketInfo>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Map from remote server port → local port (for inject delivery routing)
+static WG_INJECT_PORT_MAP: LazyLock<Mutex<HashMap<u16, u16>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Global inject socket FD (used to send data to local sockets via loopback)
+static WG_INJECT_FD: Mutex<Option<i32>> = Mutex::new(None);
+
+// ============================================================================
 // External C functions from PlatformSockets.c (compiled with renamed symbols)
 // ============================================================================
 
@@ -155,6 +180,12 @@ pub fn disable_wg_routing() {
     WG_UDP_SOCKETS.lock().clear();
     WG_TCP_SOCKETS.lock().clear();
     WG_PORT_SENDERS.lock().clear();
+    WG_INJECT_SOCKETS.lock().clear();
+    WG_INJECT_PORT_MAP.lock().clear();
+    // Close inject socket
+    if let Some(fd) = WG_INJECT_FD.lock().take() {
+        unsafe { libc::close(fd); }
+    }
     // Reset TCP FD counter
     WG_TCP_FD_COUNTER.store(WG_TCP_FD_BASE, Ordering::SeqCst);
     info!("WG zero-copy routing disabled");
@@ -566,29 +597,18 @@ pub unsafe extern "C" fn wg_sendto(
         return libc::sendto(sockfd, buf, len, flags, dest_addr, addrlen);
     }
 
-    // Check if this socket is WG-tracked
-    let socket_info = {
-        let sockets = WG_UDP_SOCKETS.lock();
-        sockets.get(&sockfd).cloned()
-    };
-
-    let info = match socket_info {
-        Some(info) => info,
-        None => {
-            // Not a WG-tracked socket, use real sendto
-            return libc::sendto(sockfd, buf, len, flags, dest_addr, addrlen);
-        }
-    };
-
-    // Extract destination IP and port
+    // Extract destination IP and port first (before socket lookup)
     let (dest_ip, dest_port) = match extract_addr_from_sockaddr(dest_addr) {
         Some(addr) => addr,
         None => {
+            debug!("wg_sendto: fd={}, len={}, could not extract addr, fallback to real sendto", sockfd, len);
             return libc::sendto(sockfd, buf, len, flags, dest_addr, addrlen);
         }
     };
 
-    // Only intercept traffic to the WG-proxied server (127.0.0.1 == proxy target)
+    debug!("wg_sendto: fd={}, dest={}:{}, len={}", sockfd, dest_ip, dest_port, len);
+
+    // Check if destination is the WG server
     let config = WG_CONFIG.lock();
     let cfg = match config.as_ref() {
         Some(cfg) => cfg,
@@ -597,11 +617,12 @@ pub unsafe extern "C" fn wg_sendto(
         }
     };
 
-    // Check if destination is the proxy address (127.0.0.1) or the WG server
-    let is_wg_target = dest_ip == Ipv4Addr::new(127, 0, 0, 1)
-        || dest_ip == cfg.server_ip;
+    // Check if destination is the WG server
+    let is_wg_target = dest_ip == cfg.server_ip;
 
     if !is_wg_target {
+        debug!("wg_sendto: fd={}, dest={}:{} not WG target (server_ip={}), fallback",
+               sockfd, dest_ip, dest_port, cfg.server_ip);
         drop(config);
         // Not targeting WG server (e.g., STUN), use real sendto
         return libc::sendto(sockfd, buf, len, flags, dest_addr, addrlen);
@@ -609,23 +630,55 @@ pub unsafe extern "C" fn wg_sendto(
 
     let tunnel_ip = cfg.tunnel_ip;
     let server_ip = cfg.server_ip;
-    let local_port = info.local_port;
     drop(config);
 
-    // Register port → channel mapping on first sendto to this port
-    {
-        let mut remote_port_lock = info.remote_port.lock();
-        if remote_port_lock.is_none() || *remote_port_lock != Some(dest_port) {
-            *remote_port_lock = Some(dest_port);
+    // Check if this socket is in WG_UDP_SOCKETS (channel-based, created by bindUdpSocket)
+    let socket_info = {
+        let sockets = WG_UDP_SOCKETS.lock();
+        sockets.get(&sockfd).cloned()
+    };
 
-            let mut senders = WG_PORT_SENDERS.lock();
-            senders.insert(dest_port, info.sender.clone());
+    let local_port = if let Some(ref info) = socket_info {
+        // Channel-based socket (created by bindUdpSocket) - register port → channel mapping
+        let lp = info.local_port;
+        {
+            let mut remote_port_lock = info.remote_port.lock();
+            if remote_port_lock.is_none() || *remote_port_lock != Some(dest_port) {
+                *remote_port_lock = Some(dest_port);
+                WG_PORT_SENDERS.lock().insert(dest_port, info.sender.clone());
+                info!(
+                    "WG zero-copy: registered port mapping fd={} local_port={} <-> remote_port={}",
+                    sockfd, lp, dest_port
+                );
+            }
+        }
+        lp
+    } else {
+        // Not a channel-based socket (e.g., ENet) - auto-register for inject delivery.
+        // Data from WG will be injected to this socket via loopback sendto,
+        // and recvfrom will fix the source address.
+        let lp = get_socket_local_port(sockfd);
+        if lp == 0 {
+            warn!("wg_sendto: could not determine local port for fd={}, falling back", sockfd);
+            return libc::sendto(sockfd, buf, len, flags, dest_addr, addrlen);
+        }
+
+        let mut inject_sockets = WG_INJECT_SOCKETS.lock();
+        if !inject_sockets.contains_key(&sockfd) {
+            inject_sockets.insert(sockfd, WgInjectSocketInfo {
+                local_port: lp,
+                remote_ip: server_ip,
+                remote_port: dest_port,
+            });
+            drop(inject_sockets);
+            WG_INJECT_PORT_MAP.lock().insert(dest_port, lp);
             info!(
-                "WG zero-copy: registered port mapping fd={} local_port={} <-> remote_port={}",
-                sockfd, local_port, dest_port
+                "WG auto-registered inject socket: fd={}, local_port={}, remote={}:{}",
+                sockfd, lp, server_ip, dest_port
             );
         }
-    }
+        lp
+    };
 
     // Build UDP/IP packet and send through WireGuard
     let data = std::slice::from_raw_parts(buf as *const u8, len);
@@ -634,14 +687,172 @@ pub unsafe extern "C" fn wg_sendto(
 
     let ip_packet = crate::wireguard::build_udp_ip_packet(src_addr, dst_addr, data);
 
+    debug!("wg_sendto: sending {} bytes via WG: {} -> {} (fd={})", len, src_addr, dst_addr, sockfd);
+
     match crate::wireguard::wg_send_ip_packet(&ip_packet) {
-        Ok(()) => len as libc::ssize_t,
+        Ok(()) => {
+            debug!("wg_sendto: successfully sent {} bytes via WG fd={}", len, sockfd);
+            len as libc::ssize_t
+        }
         Err(e) => {
-            warn!("wg_sendto: failed to send through WG: {}", e);
+            warn!("wg_sendto: failed to send through WG: {} (fd={}, dst={})", e, sockfd, dst_addr);
             // On WG send failure, fall back to real sendto (goes through proxy)
             libc::sendto(sockfd, buf, len, flags, dest_addr, addrlen)
         }
     }
+}
+
+/// WG-aware recvfrom: fixes source addresses for inject-mode sockets.
+///
+/// For sockets auto-registered by wg_sendto (e.g., ENet), incoming WG data
+/// is injected to the real socket via loopback. This interceptor calls real
+/// recvfrom, then replaces the localhost source address with the actual WG
+/// server address so ENet's peer address matching works correctly.
+///
+/// For all other sockets, this is a transparent pass-through.
+#[no_mangle]
+pub unsafe extern "C" fn wg_recvfrom(
+    sockfd: libc::c_int,
+    buf: *mut libc::c_void,
+    len: libc::size_t,
+    flags: libc::c_int,
+    src_addr: *mut libc::sockaddr,
+    addrlen: *mut libc::socklen_t,
+) -> libc::ssize_t {
+    // Always call real recvfrom first
+    let result = libc::recvfrom(sockfd, buf, len, flags, src_addr, addrlen);
+
+    // Fix source address for inject-mode sockets
+    if result > 0 && WG_ROUTING_ACTIVE.load(Ordering::Relaxed)
+        && !src_addr.is_null() && !addrlen.is_null()
+    {
+        // Quick check: is this an inject-mode socket?
+        let fix_info = {
+            let inject = WG_INJECT_SOCKETS.lock();
+            inject.get(&sockfd).copied()
+        };
+
+        if let Some(info) = fix_info {
+            // Check if the source is localhost (our injected data)
+            let family = (*src_addr).sa_family as i32;
+            debug!("wg_recvfrom: fd={}, result={}, family={}, inject_info=(remote={}:{})",
+                   sockfd, result, family, info.remote_ip, info.remote_port);
+            if family == libc::AF_INET {
+                let sin = &mut *(src_addr as *mut libc::sockaddr_in);
+                let src_ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
+                let src_port = u16::from_be(sin.sin_port);
+                debug!("wg_recvfrom: fd={}, AF_INET src={}:{}, is_loopback={}",
+                       sockfd, src_ip, src_port, src_ip.is_loopback());
+                if src_ip.is_loopback() {
+                    // Replace with actual WG server address
+                    sin.sin_addr.s_addr = u32::from(info.remote_ip).to_be();
+                    sin.sin_port = info.remote_port.to_be();
+                    debug!("wg_recvfrom: fd={}, fixed src to {}:{}",
+                           sockfd, info.remote_ip, info.remote_port);
+                }
+            } else if family == libc::AF_INET6 {
+                // Handle IPv4-mapped IPv6 loopback (::ffff:127.0.0.1)
+                // This happens when an AF_INET6 dual-stack socket receives
+                // our injected IPv4 loopback packet
+                let sin6 = &mut *(src_addr as *mut libc::sockaddr_in6);
+                let octets = sin6.sin6_addr.s6_addr;
+                let is_v4_mapped_loopback =
+                    octets[0..10] == [0; 10]
+                    && octets[10] == 0xff && octets[11] == 0xff
+                    && octets[12] == 127 && octets[13] == 0
+                    && octets[14] == 0 && octets[15] == 1;
+                debug!("wg_recvfrom: fd={}, AF_INET6 is_v4_mapped_loopback={}", sockfd, is_v4_mapped_loopback);
+                if is_v4_mapped_loopback {
+                    // Replace with v4-mapped WG server address
+                    let ip_octets = info.remote_ip.octets();
+                    sin6.sin6_addr.s6_addr = [
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff,
+                        ip_octets[0], ip_octets[1], ip_octets[2], ip_octets[3],
+                    ];
+                    sin6.sin6_port = info.remote_port.to_be();
+                    debug!("wg_recvfrom: fd={}, fixed v6-mapped src to {}:{}",
+                           sockfd, info.remote_ip, info.remote_port);
+                }
+            } else {
+                debug!("wg_recvfrom: fd={}, unexpected family={}, no fixup", sockfd, family);
+            }
+        } else if result > 0 {
+            // Not an inject socket - log for debugging
+            debug!("wg_recvfrom: fd={}, result={}, not inject-mode socket", sockfd, result);
+        }
+    } else if result < 0 && WG_ROUTING_ACTIVE.load(Ordering::Relaxed) {
+        let errno_val = *libc::__errno();
+        debug!("wg_recvfrom: fd={}, error result={}, errno={}", sockfd, result, errno_val);
+    }
+
+    result
+}
+
+/// Try to deliver UDP data to an inject-mode socket (e.g., ENet).
+/// Sends data via loopback to the real socket's local port, so that
+/// poll()/select() on the real FD wakes up and recvfrom() receives the data.
+///
+/// Returns true if data was delivered, false if no inject socket exists for this port.
+pub fn try_inject_udp_data(src_port: u16, data: &[u8]) -> bool {
+    let local_port = {
+        let port_map = WG_INJECT_PORT_MAP.lock();
+        match port_map.get(&src_port) {
+            Some(&port) => port,
+            None => return false,
+        }
+    };
+
+    // Get or create the inject socket
+    let inject_fd = get_or_create_inject_fd();
+    if inject_fd < 0 {
+        warn!("try_inject_udp_data: failed to create inject socket");
+        return false;
+    }
+
+    // Send to localhost:local_port (will be received by the real socket)
+    let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+    addr.sin_family = libc::AF_INET as libc::sa_family_t;
+    addr.sin_addr.s_addr = u32::from(Ipv4Addr::LOCALHOST).to_be();
+    addr.sin_port = local_port.to_be();
+
+    let result = unsafe {
+        libc::sendto(
+            inject_fd,
+            data.as_ptr() as *const libc::c_void,
+            data.len(),
+            0,
+            &addr as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+        )
+    };
+
+    if result < 0 {
+        let err = std::io::Error::last_os_error();
+        warn!("try_inject_udp_data: sendto failed for port {}: {} (inject_fd={}, local_port={})",
+              local_port, err, inject_fd, local_port);
+        false
+    } else {
+        info!("try_inject_udp_data: delivered {} bytes from server port {} to local port {} (inject_fd={})",
+              data.len(), src_port, local_port, inject_fd);
+        true
+    }
+}
+
+/// Get or create the global inject UDP socket (used for loopback data injection)
+fn get_or_create_inject_fd() -> i32 {
+    let mut fd_guard = WG_INJECT_FD.lock();
+    if let Some(fd) = *fd_guard {
+        return fd;
+    }
+
+    let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+    if fd < 0 {
+        warn!("Failed to create inject socket: {}", std::io::Error::last_os_error());
+        return -1;
+    }
+    *fd_guard = Some(fd);
+    debug!("Created WG inject socket: fd={}", fd);
+    fd
 }
 
 // ============================================================================

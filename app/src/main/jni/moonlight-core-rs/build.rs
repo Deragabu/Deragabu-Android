@@ -182,6 +182,9 @@ fn main() {
     build_opus(&opus_config);
 
     // Build enet library
+    // WG interception header (defined early so it can be used by ENet build too)
+    let wg_intercept_header = manifest_dir.join("wg_intercept.h");
+
     let enet_dir = moonlight_common_c_dir.join("enet");
     let mut enet_build = cc::Build::new();
     enet_build
@@ -196,26 +199,26 @@ fn main() {
         .include(enet_dir.join("include"))
         .define("HAS_SOCKLEN_T", "1")
         .define("HAVE_CLOCK_GETTIME", "1")
+        // Force ENet to use sendto/recvfrom instead of sendmsg/recvmsg.
+        // On Android, NO_MSGAPI is not defined by default, causing ENet to use
+        // sendmsg/recvmsg which our WG interception macros cannot intercept.
+        .define("NO_MSGAPI", "1")
+        // Force-include WG interception header so ENet's sendto/recvfrom
+        // are redirected through WG-aware wrappers for zero-copy tunneling
+        .flag("-include")
+        .flag(wg_intercept_header.to_str().unwrap())
         .warnings(false);
     apply_common_settings(&mut enet_build);
     enet_build.compile("enet");
 
-    // Build reed-solomon library
-    let rs_dir = moonlight_common_c_dir.join("reedsolomon");
-    let mut rs_build = cc::Build::new();
-    rs_build
-        .file(rs_dir.join("rs.c"))
-        .include(&rs_dir)
-        .warnings(false);
-    apply_common_settings(&mut rs_build);
-    rs_build.compile("reedsolomon");
+    // nanors directory (reed-solomon) - compiled via rswrapper.c in the main library
+    let rs_dir = moonlight_common_c_dir.join("nanors");
 
     // Build PlatformSockets.c separately with renamed key functions.
     // These renamed symbols (orig_*) are called by Rust zero-copy wrappers
     // in platform_sockets.rs when WG is not active or as fallback.
     // Also force-include wg_intercept.h for send/recv redirection in sendMtuSafe().
     let src_dir = moonlight_common_c_dir.join("src");
-    let wg_intercept_header = manifest_dir.join("wg_intercept.h");
     let mut plat_build = cc::Build::new();
     plat_build
         .file(src_dir.join("PlatformSockets.c"))
@@ -266,6 +269,9 @@ fn main() {
         .file(src_dir.join("RtpVideoQueue.c"))
         .file(src_dir.join("RtspConnection.c"))
         .file(src_dir.join("RtspParser.c"))
+        // rswrapper.c compiles nanors/rs.c inline with ISA-specific variants
+        // and provides reed_solomon_init() + function pointer dispatch
+        .file(src_dir.join("rswrapper.c"))
         .file(src_dir.join("SdpGenerator.c"))
         .file(src_dir.join("SimpleStun.c"))
         .file(src_dir.join("VideoDepacketizer.c"))
@@ -273,9 +279,14 @@ fn main() {
         .include(&src_dir)
         .include(enet_dir.join("include"))
         .include(&rs_dir)
+        .include(rs_dir.join("deps"))
+        .include(rs_dir.join("deps").join("obl"))
         .define("HAS_SOCKLEN_T", "1")
         .define("LC_ANDROID", None)
         .define("HAVE_CLOCK_GETTIME", "1")
+        // Enable vectorization and loop unrolling for rswrapper.c (matches upstream CMake)
+        .flag("-ftree-vectorize")
+        .flag("-funroll-loops")
         // Force-include WG interception header to redirect sendto → wg_sendto
         .flag("-include")
         .flag(wg_intercept_header.to_str().unwrap())

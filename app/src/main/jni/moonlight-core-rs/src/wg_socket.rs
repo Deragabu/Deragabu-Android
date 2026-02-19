@@ -37,6 +37,8 @@ static HANDLE_COUNTER: AtomicU64 = AtomicU64::new(1);
 struct RecvBuffer {
     data: Vec<u8>,
     pos: usize,
+    /// EOF was received (e.g., consumed by wg_socket_has_data polling)
+    eof: bool,
 }
 
 /// Active socket connection info.
@@ -142,6 +144,7 @@ pub fn wg_socket_connect(host: &str, port: u16, timeout_ms: u32) -> u64 {
         recv_buf: Arc::new(Mutex::new(RecvBuffer {
             data: Vec::new(),
             pos: 0,
+            eof: false,
         })),
         created_at: Instant::now(),
     };
@@ -199,6 +202,11 @@ pub fn wg_socket_recv(handle: u64, buffer: &mut [u8], timeout_ms: u32) -> i32 {
         }
 
         return to_copy as i32;
+    }
+
+    // Check if EOF was previously consumed (e.g., by wg_socket_has_data polling)
+    if recv_buf.eof {
+        return 0; // EOF
     }
 
     // Step 3: Lock per-connection receiver and block on channel recv
@@ -311,16 +319,13 @@ pub fn wg_socket_close(handle: u64) {
     };
     // Global lock released here; the removed connection's Arcs will drop when we leave scope
 
-    // Gracefully close the TCP connection
+    // Gracefully close the TCP connection.
+    // Don't remove from virtual stack - let TCP teardown complete properly.
+    // The connection will transition through FinWait/LastAck/TimeWait/Closed
+    // and be cleaned up by cleanup_stale_connections.
     if let Ok(proxy) = get_or_create_shared_proxy(&config) {
         proxy.virtual_stack.tcp_close(&conn_id).ok();
         proxy.flush_outgoing();
-        
-        // Give time for FIN to be processed
-        std::thread::sleep(Duration::from_millis(10));
-        proxy.flush_outgoing();
-        
-        proxy.virtual_stack.remove_tcp_connection(&conn_id);
     }
 }
 
@@ -359,10 +364,10 @@ pub fn wg_socket_has_data(handle: u64) -> bool {
         None => return false,
     };
 
-    // Check if there's buffered data from a previous partial read
+    // Check if there's buffered data or EOF from a previous read/poll
     {
         let recv_buf = recv_buf_arc.lock();
-        if recv_buf.pos < recv_buf.data.len() {
+        if recv_buf.pos < recv_buf.data.len() || recv_buf.eof {
             return true;
         }
     }
@@ -371,15 +376,22 @@ pub fn wg_socket_has_data(handle: u64) -> bool {
     let receiver = receiver_arc.lock();
     match receiver.try_recv() {
         Ok(data) => {
-            // Data available - buffer it for later recv call
             let mut recv_buf = recv_buf_arc.lock();
-            recv_buf.data = data;
-            recv_buf.pos = 0;
+            if data.is_empty() {
+                // EOF signal - mark it so recv() returns 0 immediately
+                recv_buf.eof = true;
+            } else {
+                // Data available - buffer it for later recv call
+                recv_buf.data = data;
+                recv_buf.pos = 0;
+            }
             true
         }
         Err(std::sync::mpsc::TryRecvError::Empty) => false,
         Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-            // Channel closed - return true so recv() can return EOF
+            // Channel closed - mark EOF so recv() returns 0 immediately
+            let mut recv_buf = recv_buf_arc.lock();
+            recv_buf.eof = true;
             true
         }
     }
