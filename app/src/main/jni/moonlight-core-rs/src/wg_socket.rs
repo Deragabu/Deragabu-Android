@@ -17,7 +17,7 @@
 //! global lock, to avoid deadlocking OkHttp's concurrent read/write threads.
 
 use std::collections::HashMap;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::Arc;
@@ -85,8 +85,8 @@ pub fn wg_socket_connect(host: &str, port: u16, timeout_ms: u32) -> u64 {
         }
     };
 
-    // Parse host as IPv4 (WireGuard tunnel IP)
-    let target_ip: Ipv4Addr = match host.parse() {
+    // Parse host as IP address (IPv4 or IPv6)
+    let target_ip: IpAddr = match host.parse() {
         Ok(ip) => ip,
         Err(e) => {
             error!("wg_socket_connect: invalid host IP '{}': {}", host, e);
@@ -154,7 +154,7 @@ pub fn wg_socket_connect(host: &str, port: u16, timeout_ms: u32) -> u64 {
     }
 
     // Connection established - create handle
-    let handle = HANDLE_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let handle = HANDLE_COUNTER.fetch_add(1, Ordering::Relaxed);
 
     let connection = WgSocketConnection {
         conn_id,

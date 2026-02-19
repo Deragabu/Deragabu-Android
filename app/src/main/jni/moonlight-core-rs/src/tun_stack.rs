@@ -13,12 +13,12 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io;
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use etherparse::{IpNumber, Ipv4Header, TcpHeader};
+use etherparse::{IpNumber, Ipv4Header, Ipv6Header, TcpHeader};
 use log::{info, warn};
 use parking_lot::{Condvar, Mutex};
 
@@ -35,12 +35,12 @@ pub enum TcpState {
     TimeWait,
 }
 
-/// TCP Connection identifier
+/// TCP Connection identifier (supports both IPv4 and IPv6)
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct TcpConnectionId {
-    pub local_addr: Ipv4Addr,
+    pub local_addr: IpAddr,
     pub local_port: u16,
-    pub remote_addr: Ipv4Addr,
+    pub remote_addr: IpAddr,
     pub remote_port: u16,
 }
 
@@ -143,7 +143,7 @@ impl TcpFlags {
 /// Incoming IP packets from WireGuard are processed and application data
 /// is delivered through mpsc channels.
 pub struct VirtualStack {
-    local_ipv4: Ipv4Addr,
+    local_ip: IpAddr,
     tcp_connections: Mutex<HashMap<TcpConnectionId, TcpControlBlock>>,
     next_local_port: AtomicU16,
     next_seq: AtomicU32,
@@ -156,10 +156,10 @@ pub struct VirtualStack {
 }
 
 impl VirtualStack {
-    /// Create a new virtual stack with the given local IPv4 address
-    pub fn new(local_ipv4: Ipv4Addr) -> Self {
+    /// Create a new virtual stack with the given local IP address (IPv4 or IPv6)
+    pub fn new(local_ip: impl Into<IpAddr>) -> Self {
         Self {
-            local_ipv4,
+            local_ip: local_ip.into(),
             tcp_connections: Mutex::new(HashMap::new()),
             next_local_port: AtomicU16::new(49152),
             next_seq: AtomicU32::new(1_000_000),
@@ -204,14 +204,15 @@ impl VirtualStack {
     /// Returns the connection ID and a receiver channel for incoming data.
     pub fn tcp_connect(
         &self,
-        remote_addr: Ipv4Addr,
+        remote_addr: impl Into<IpAddr>,
         remote_port: u16,
     ) -> (TcpConnectionId, mpsc::Receiver<Vec<u8>>) {
+        let remote_addr = remote_addr.into();
         let local_port = self.allocate_port();
         let initial_seq = self.generate_initial_seq();
 
         let conn_id = TcpConnectionId {
-            local_addr: self.local_ipv4,
+            local_addr: self.local_ip,
             local_port,
             remote_addr,
             remote_port,
@@ -439,25 +440,28 @@ impl VirtualStack {
         std::mem::take(&mut *self.outgoing_packets.lock())
     }
 
-    /// Process an incoming IP packet received from WireGuard
+    /// Process an incoming IP packet received from WireGuard (IPv4 or IPv6)
     pub fn process_incoming_packet(&self, packet: &[u8]) {
         if packet.len() < 20 {
             return;
         }
 
         let version = (packet[0] >> 4) & 0x0F;
-        if version != 4 {
-            return;
+        match version {
+            4 => self.process_incoming_ipv4(packet),
+            6 => self.process_incoming_ipv6(packet),
+            _ => {}
         }
+    }
 
-        // Parse IPv4 header
+    fn process_incoming_ipv4(&self, packet: &[u8]) {
         let (ip_header, payload) = match Ipv4Header::from_slice(packet) {
             Ok(r) => r,
             Err(_) => return,
         };
 
-        let src_ip = Ipv4Addr::from(ip_header.source);
-        let dst_ip = Ipv4Addr::from(ip_header.destination);
+        let src_ip: IpAddr = Ipv4Addr::from(ip_header.source).into();
+        let dst_ip: IpAddr = Ipv4Addr::from(ip_header.destination).into();
 
         match ip_header.protocol {
             IpNumber::TCP => self.process_tcp_packet(src_ip, dst_ip, payload),
@@ -465,7 +469,26 @@ impl VirtualStack {
         }
     }
 
-    fn process_tcp_packet(&self, src_ip: Ipv4Addr, dst_ip: Ipv4Addr, payload: &[u8]) {
+    fn process_incoming_ipv6(&self, packet: &[u8]) {
+        if packet.len() < 40 {
+            return;
+        }
+        let (ip_header, payload) = match Ipv6Header::from_slice(packet) {
+            Ok(r) => r,
+            Err(_) => return,
+        };
+
+        let src_ip: IpAddr = Ipv6Addr::from(ip_header.source).into();
+        let dst_ip: IpAddr = Ipv6Addr::from(ip_header.destination).into();
+
+        // Note: IPv6 extension headers are not supported; next_header must be TCP
+        match ip_header.next_header {
+            IpNumber::TCP => self.process_tcp_packet(src_ip, dst_ip, payload),
+            _ => {}
+        }
+    }
+
+    fn process_tcp_packet(&self, src_ip: IpAddr, dst_ip: IpAddr, payload: &[u8]) {
         let (tcp_header, tcp_payload) = match TcpHeader::from_slice(payload) {
             Ok(r) => r,
             Err(_) => return,
@@ -916,7 +939,7 @@ impl VirtualStack {
         }
     }
 
-    /// Build and queue a TCP packet for sending
+    /// Build and queue a TCP packet for sending (supports IPv4 and IPv6)
     fn send_tcp_packet(
         &self,
         conn_id: &TcpConnectionId,
@@ -939,31 +962,45 @@ impl VirtualStack {
         tcp_header.psh = (flags & TcpFlags::PSH) != 0;
 
         // Add TCP options for SYN packets: MSS + Window Scale
-        // This enables TCP window scaling (RFC 7323), allowing effective
-        // receive window up to ~8MB instead of the 65535 byte limit.
         if tcp_header.syn {
-            // TCP options (8 bytes, 4-byte aligned):
-            // MSS: kind=2, len=4, value=1360 (conservative for WG tunnel)
-            // NOP: kind=1 (padding for alignment)
-            // Window Scale: kind=3, len=3, shift=TCP_WINDOW_SCALE_SHIFT
             let mss: u16 = 1360;
             let options: [u8; 8] = [
-                2, 4, (mss >> 8) as u8, (mss & 0xff) as u8, // MSS
-                1,                                             // NOP
-                3, 3, TCP_WINDOW_SCALE_SHIFT,                  // Window Scale
+                2, 4, (mss >> 8) as u8, (mss & 0xff) as u8,
+                1,
+                3, 3, TCP_WINDOW_SCALE_SHIFT,
             ];
             if let Err(e) = tcp_header.set_options_raw(&options) {
                 warn!("Failed to set TCP SYN options: {:?}", e);
             }
         }
 
-        let src = conn_id.local_addr;
-        let dst = conn_id.remote_addr;
-
         let ip_payload_len = tcp_header.header_len() as usize + payload.len();
+
+        match (conn_id.local_addr, conn_id.remote_addr) {
+            (IpAddr::V4(src), IpAddr::V4(dst)) => {
+                self.send_tcp_packet_v4(src, dst, &mut tcp_header, payload, ip_payload_len);
+            }
+            (IpAddr::V6(src), IpAddr::V6(dst)) => {
+                self.send_tcp_packet_v6(src, dst, &mut tcp_header, payload, ip_payload_len);
+            }
+            _ => {
+                warn!("send_tcp_packet: mismatched address families (local={}, remote={})",
+                      conn_id.local_addr, conn_id.remote_addr);
+            }
+        }
+    }
+
+    fn send_tcp_packet_v4(
+        &self,
+        src: Ipv4Addr,
+        dst: Ipv4Addr,
+        tcp_header: &mut TcpHeader,
+        payload: &[u8],
+        ip_payload_len: usize,
+    ) {
         let ip_header = match Ipv4Header::new(
             ip_payload_len as u16,
-            64, // TTL
+            64,
             IpNumber::TCP,
             src.octets(),
             dst.octets(),
@@ -975,7 +1012,6 @@ impl VirtualStack {
             }
         };
 
-        // Calculate TCP checksum using IPv4 pseudo-header
         tcp_header.checksum = match tcp_header.calc_checksum_ipv4(&ip_header, payload) {
             Ok(c) => c,
             Err(e) => {
@@ -994,7 +1030,45 @@ impl VirtualStack {
             return;
         }
         packet.extend_from_slice(payload);
+        self.outgoing_packets.lock().push(packet);
+    }
 
+    fn send_tcp_packet_v6(
+        &self,
+        src: Ipv6Addr,
+        dst: Ipv6Addr,
+        tcp_header: &mut TcpHeader,
+        payload: &[u8],
+        ip_payload_len: usize,
+    ) {
+        let ip_header = Ipv6Header {
+            traffic_class: 0,
+            flow_label: etherparse::Ipv6FlowLabel::ZERO,
+            payload_length: ip_payload_len as u16,
+            next_header: IpNumber::TCP,
+            hop_limit: 64,
+            source: src.octets(),
+            destination: dst.octets(),
+        };
+
+        tcp_header.checksum = match tcp_header.calc_checksum_ipv6(&ip_header, payload) {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("Failed to calculate TCP checksum (IPv6): {}", e);
+                return;
+            }
+        };
+
+        let mut packet = Vec::with_capacity(40 + ip_payload_len);
+        if let Err(e) = ip_header.write(&mut packet) {
+            warn!("Failed to write IPv6 header: {}", e);
+            return;
+        }
+        if let Err(e) = tcp_header.write(&mut packet) {
+            warn!("Failed to write TCP header: {}", e);
+            return;
+        }
+        packet.extend_from_slice(payload);
         self.outgoing_packets.lock().push(packet);
     }
 

@@ -52,12 +52,12 @@ static WG_ROUTING_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// Counter for virtual WG TCP socket FDs
 static WG_TCP_FD_COUNTER: AtomicI32 = AtomicI32::new(WG_TCP_FD_BASE);
 
-/// WG routing configuration
+/// WG routing configuration (supports both IPv4 and IPv6)
 struct WgRoutingConfig {
-    /// Client's WG tunnel IP (e.g., 10.0.0.2)
-    tunnel_ip: Ipv4Addr,
-    /// Server's WG tunnel IP (e.g., 10.0.0.1)
-    server_ip: Ipv4Addr,
+    /// Client's WG tunnel IP (e.g., 10.0.0.2 or fd00::2)
+    tunnel_ip: IpAddr,
+    /// Server's WG tunnel IP (e.g., 10.0.0.1 or fd00::1)
+    server_ip: IpAddr,
 }
 
 static WG_CONFIG: Mutex<Option<WgRoutingConfig>> = Mutex::new(None);
@@ -106,7 +106,7 @@ static WG_PORT_SENDERS: LazyLock<Mutex<HashMap<u16, SyncSender<Vec<u8>>>>> =
 #[derive(Clone, Copy)]
 struct WgInjectSocketInfo {
     _local_port: u16,
-    remote_ip: Ipv4Addr,
+    remote_ip: IpAddr,
     remote_port: u16,
 }
 
@@ -168,10 +168,12 @@ extern "C" {
 
 /// Enable WG zero-copy routing with the given tunnel and server IPs.
 /// Called from wg_create_streaming_proxies after proxy creation.
-pub fn enable_wg_routing(tunnel_ip: Ipv4Addr, server_ip: Ipv4Addr) {
+pub fn enable_wg_routing(tunnel_ip: impl Into<IpAddr>, server_ip: impl Into<IpAddr>) {
+    let tunnel_ip = tunnel_ip.into();
+    let server_ip = server_ip.into();
     let mut config = WG_CONFIG.lock();
     *config = Some(WgRoutingConfig { tunnel_ip, server_ip });
-    WG_ROUTING_ACTIVE.store(true, Ordering::SeqCst);
+    WG_ROUTING_ACTIVE.store(true, Ordering::Release);
     info!(
         "WG zero-copy routing enabled: tunnel_ip={}, server_ip={}",
         tunnel_ip, server_ip
@@ -181,7 +183,7 @@ pub fn enable_wg_routing(tunnel_ip: Ipv4Addr, server_ip: Ipv4Addr) {
 /// Disable WG zero-copy routing and clean up all tracked sockets.
 /// Called from wg_stop_tunnel.
 pub fn disable_wg_routing() {
-    WG_ROUTING_ACTIVE.store(false, Ordering::SeqCst);
+    WG_ROUTING_ACTIVE.store(false, Ordering::Release);
     WG_CONFIG.lock().take();
     WG_UDP_SOCKETS.lock().clear();
     WG_TCP_SOCKETS.lock().clear();
@@ -194,7 +196,7 @@ pub fn disable_wg_routing() {
         unsafe { libc::close(fd); }
     }
     // Reset TCP FD counter
-    WG_TCP_FD_COUNTER.store(WG_TCP_FD_BASE, Ordering::SeqCst);
+    WG_TCP_FD_COUNTER.store(WG_TCP_FD_BASE, Ordering::Relaxed);
     info!("WG zero-copy routing disabled");
 }
 
@@ -229,7 +231,7 @@ pub fn try_push_udp_data(src_port: u16, data: &[u8]) -> bool {
 
 /// Check if WG routing is active (for use by other modules)
 pub fn is_wg_routing_active() -> bool {
-    WG_ROUTING_ACTIVE.load(Ordering::SeqCst)
+    WG_ROUTING_ACTIVE.load(Ordering::Acquire)
 }
 
 // ============================================================================
@@ -340,7 +342,7 @@ pub unsafe extern "C" fn closeSocket(s: i32) {
     if s >= WG_TCP_FD_BASE {
         let removed = WG_TCP_SOCKETS.lock().remove(&s);
         if let Some(info) = removed {
-            info.is_open.store(false, Ordering::SeqCst);
+            info.is_open.store(false, Ordering::Release);
             crate::wg_socket::wg_socket_close(info.wg_handle);
             debug!("Closed WG TCP socket: virtual_fd={}, handle={}", s, info.wg_handle);
         }
@@ -612,17 +614,11 @@ pub unsafe extern "C" fn wg_sendto(
 
     // Extract destination IP and port first (before socket lookup)
     // If dest_addr is NULL, check if we have a virtually connected peer
-    let (dest_ip, dest_port) = if dest_addr.is_null() {
+    let (dest_ip, dest_port): (IpAddr, u16) = if dest_addr.is_null() {
         // Check for virtually connected socket (we intercepted connect())
         let connected_peers = WG_UDP_CONNECTED_PEERS.lock();
         if let Some(peer) = connected_peers.get(&sockfd) {
-            match peer.ip() {
-                IpAddr::V4(ip) => (ip, peer.port()),
-                IpAddr::V6(_) => {
-                    drop(connected_peers);
-                    return libc::sendto(sockfd, buf, len, flags, dest_addr, addrlen);
-                }
-            }
+            (peer.ip(), peer.port())
         } else {
             drop(connected_peers);
             // No virtual connection, pass through
@@ -714,8 +710,8 @@ pub unsafe extern "C" fn wg_sendto(
 
     // Build UDP/IP packet and send through WireGuard
     let data = std::slice::from_raw_parts(buf as *const u8, len);
-    let src_addr = SocketAddr::new(IpAddr::V4(tunnel_ip), local_port);
-    let dst_addr = SocketAddr::new(IpAddr::V4(server_ip), dest_port);
+    let src_addr = SocketAddr::new(tunnel_ip, local_port);
+    let dst_addr = SocketAddr::new(server_ip, dest_port);
 
     let ip_packet = crate::wireguard::build_udp_ip_packet(src_addr, dst_addr, data);
 
@@ -777,8 +773,16 @@ pub unsafe extern "C" fn wg_recvfrom(
                        sockfd, src_ip, src_port, src_ip.is_loopback());
                 if src_ip.is_loopback() {
                     // Replace with actual WG server address
-                    sin.sin_addr.s_addr = u32::from(info.remote_ip).to_be();
-                    sin.sin_port = info.remote_port.to_be();
+                    match info.remote_ip {
+                        IpAddr::V4(remote_v4) => {
+                            sin.sin_addr.s_addr = u32::from(remote_v4).to_be();
+                            sin.sin_port = info.remote_port.to_be();
+                        }
+                        IpAddr::V6(_) => {
+                            // IPv6 remote but AF_INET socket - shouldn't happen normally
+                            warn!("wg_recvfrom: IPv6 remote with AF_INET socket fd={}", sockfd);
+                        }
+                    }
                     debug!("wg_recvfrom: fd={}, fixed src to {}:{}",
                            sockfd, info.remote_ip, info.remote_port);
                 }
@@ -793,16 +797,24 @@ pub unsafe extern "C" fn wg_recvfrom(
                     && octets[10] == 0xff && octets[11] == 0xff
                     && octets[12] == 127 && octets[13] == 0
                     && octets[14] == 0 && octets[15] == 1;
-                debug!("wg_recvfrom: fd={}, AF_INET6 is_v4_mapped_loopback={}", sockfd, is_v4_mapped_loopback);
-                if is_v4_mapped_loopback {
-                    // Replace with v4-mapped WG server address
-                    let ip_octets = info.remote_ip.octets();
-                    sin6.sin6_addr.s6_addr = [
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff,
-                        ip_octets[0], ip_octets[1], ip_octets[2], ip_octets[3],
-                    ];
+                let is_v6_loopback = octets == [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1];
+                debug!("wg_recvfrom: fd={}, AF_INET6 is_v4_mapped_loopback={}, is_v6_loopback={}", sockfd, is_v4_mapped_loopback, is_v6_loopback);
+                if is_v4_mapped_loopback || is_v6_loopback {
+                    // Replace with WG server address
+                    match info.remote_ip {
+                        IpAddr::V4(remote_v4) => {
+                            let ip_octets = remote_v4.octets();
+                            sin6.sin6_addr.s6_addr = [
+                                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff,
+                                ip_octets[0], ip_octets[1], ip_octets[2], ip_octets[3],
+                            ];
+                        }
+                        IpAddr::V6(remote_v6) => {
+                            sin6.sin6_addr.s6_addr = remote_v6.octets();
+                        }
+                    }
                     sin6.sin6_port = info.remote_port.to_be();
-                    debug!("wg_recvfrom: fd={}, fixed v6-mapped src to {}:{}",
+                    debug!("wg_recvfrom: fd={}, fixed v6 src to {}:{}",
                            sockfd, info.remote_ip, info.remote_port);
                 }
             } else {
@@ -915,8 +927,8 @@ fn get_socket_local_port(fd: i32) -> u16 {
     }
 }
 
-/// Extract IPv4 address and port from a sockaddr pointer
-fn extract_addr_from_sockaddr(addr: *const libc::sockaddr) -> Option<(Ipv4Addr, u16)> {
+/// Extract IP address and port from a sockaddr pointer (supports IPv4 and IPv6)
+fn extract_addr_from_sockaddr(addr: *const libc::sockaddr) -> Option<(IpAddr, u16)> {
     if addr.is_null() {
         return None;
     }
@@ -926,19 +938,20 @@ fn extract_addr_from_sockaddr(addr: *const libc::sockaddr) -> Option<(Ipv4Addr, 
                 let sin = &*(addr as *const libc::sockaddr_in);
                 let port = u16::from_be(sin.sin_port);
                 let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
-                Some((ip, port))
+                Some((IpAddr::V4(ip), port))
             }
             libc::AF_INET6 => {
                 let sin6 = &*(addr as *const libc::sockaddr_in6);
                 let port = u16::from_be(sin6.sin6_port);
-                // Check if it's a v4-mapped v6 address (::ffff:x.x.x.x)
                 let octets = sin6.sin6_addr.s6_addr;
+                // Check if it's a v4-mapped v6 address (::ffff:x.x.x.x)
                 if octets[0..10] == [0; 10] && octets[10] == 0xff && octets[11] == 0xff {
                     let ip = Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]);
-                    Some((ip, port))
+                    Some((IpAddr::V4(ip), port))
                 } else {
-                    // Pure IPv6 - not WG-routable in our setup
-                    None
+                    // Native IPv6 address
+                    let ip = std::net::Ipv6Addr::from(octets);
+                    Some((IpAddr::V6(ip), port))
                 }
             }
             _ => None,
@@ -946,8 +959,8 @@ fn extract_addr_from_sockaddr(addr: *const libc::sockaddr) -> Option<(Ipv4Addr, 
     }
 }
 
-/// Extract IPv4 address from sockaddr_storage
-fn extract_ipv4_from_sockaddr_storage(addr: *const libc::sockaddr_storage) -> Option<Ipv4Addr> {
+/// Extract IP address from sockaddr_storage (supports IPv4 and IPv6)
+fn extract_ip_from_sockaddr_storage(addr: *const libc::sockaddr_storage) -> Option<IpAddr> {
     if addr.is_null() {
         return None;
     }
@@ -956,16 +969,16 @@ fn extract_ipv4_from_sockaddr_storage(addr: *const libc::sockaddr_storage) -> Op
             libc::AF_INET => {
                 let sin = &*(addr as *const libc::sockaddr_in);
                 let ip = Ipv4Addr::from(u32::from_be(sin.sin_addr.s_addr));
-                Some(ip)
+                Some(IpAddr::V4(ip))
             }
             libc::AF_INET6 => {
                 let sin6 = &*(addr as *const libc::sockaddr_in6);
                 let octets = sin6.sin6_addr.s6_addr;
                 // Check for v4-mapped v6 address
                 if octets[0..10] == [0; 10] && octets[10] == 0xff && octets[11] == 0xff {
-                    Some(Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15]))
+                    Some(IpAddr::V4(Ipv4Addr::new(octets[12], octets[13], octets[14], octets[15])))
                 } else {
-                    None
+                    Some(IpAddr::V6(std::net::Ipv6Addr::from(octets)))
                 }
             }
             _ => None,
@@ -995,10 +1008,10 @@ pub unsafe extern "C" fn connectTcpSocket(
     }
 
     // Check if destination is the WG server
-    let dest_ip = match extract_ipv4_from_sockaddr_storage(dstaddr) {
+    let dest_ip = match extract_ip_from_sockaddr_storage(dstaddr) {
         Some(ip) => ip,
         None => {
-            // IPv6 or invalid, use original
+            // Unknown address family, use original
             return orig_connectTcpSocket(dstaddr, addrlen, port, timeoutSec);
         }
     };
@@ -1029,7 +1042,7 @@ pub unsafe extern "C" fn connectTcpSocket(
     }
 
     // Allocate a virtual FD for this connection
-    let virtual_fd = WG_TCP_FD_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let virtual_fd = WG_TCP_FD_COUNTER.fetch_add(1, Ordering::Relaxed);
 
     let info = Arc::new(WgTcpSocketInfo {
         wg_handle: handle,
@@ -1053,7 +1066,7 @@ pub unsafe extern "C" fn shutdownTcpSocket(s: i32) {
     if s >= WG_TCP_FD_BASE {
         let tcp_sockets = WG_TCP_SOCKETS.lock();
         if let Some(info) = tcp_sockets.get(&s) {
-            info.is_open.store(false, Ordering::SeqCst);
+            info.is_open.store(false, Ordering::Release);
             // Note: actual close happens in closeSocket
             debug!("shutdownTcpSocket: marked WG TCP socket {} for shutdown", s);
         }
@@ -1193,7 +1206,7 @@ pub unsafe extern "C" fn wg_udp_connect(
 
     // Extract destination address
     let peer_addr = match extract_addr_from_sockaddr(addr) {
-        Some((ip, port)) => SocketAddr::new(IpAddr::V4(ip), port),
+        Some((ip, port)) => SocketAddr::new(ip, port),
         None => {
             // Can't extract address, pass through
             return libc::connect(sockfd, addr, addrlen);
@@ -1211,15 +1224,13 @@ pub unsafe extern "C" fn wg_udp_connect(
     };
     drop(config);
 
-    if let IpAddr::V4(dest_ip) = peer_addr.ip() {
-        if dest_ip == server_ip {
-            // This is a UDP connect() to the WG server!
-            // Store the peer address, skip the real connect()
-            WG_UDP_CONNECTED_PEERS.lock().insert(sockfd, peer_addr);
-            info!("wg_udp_connect: intercepted connect() to WG server fd={}, peer={}",
-                  sockfd, peer_addr);
-            return 0; // Success, but socket remains unconnected
-        }
+    if peer_addr.ip() == server_ip {
+        // This is a UDP connect() to the WG server!
+        // Store the peer address, skip the real connect()
+        WG_UDP_CONNECTED_PEERS.lock().insert(sockfd, peer_addr);
+        info!("wg_udp_connect: intercepted connect() to WG server fd={}, peer={}",
+              sockfd, peer_addr);
+        return 0; // Success, but socket remains unconnected
     }
 
     // Not WG server, pass through to real connect

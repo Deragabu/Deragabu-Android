@@ -1502,8 +1502,8 @@ pub extern "C" fn Java_com_limelight_binding_wireguard_WireGuardManager_nativeHt
     }
     info!("nativeHttpSetConfig: endpoint '{}' will be resolved dynamically on each connection", endpoint_str);
 
-    // Parse tunnel address
-    let tunnel_ip: std::net::Ipv4Addr = match tunnel_addr_str.parse() {
+    // Parse tunnel address (supports IPv4 and IPv6)
+    let tunnel_ip: std::net::IpAddr = match tunnel_addr_str.parse() {
         Ok(ip) => ip,
         Err(e) => {
             error!("nativeHttpSetConfig: invalid tunnel address '{}': {}", tunnel_addr_str, e);
@@ -1511,8 +1511,8 @@ pub extern "C" fn Java_com_limelight_binding_wireguard_WireGuardManager_nativeHt
         }
     };
 
-    // Parse server address
-    let server_ip: std::net::Ipv4Addr = match server_addr_str.parse() {
+    // Parse server address (supports IPv4 and IPv6)
+    let server_ip: std::net::IpAddr = match server_addr_str.parse() {
         Ok(ip) => ip,
         Err(e) => {
             error!("nativeHttpSetConfig: invalid server address '{}': {}", server_addr_str, e);

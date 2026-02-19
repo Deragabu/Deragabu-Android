@@ -9,14 +9,12 @@
 //! - Uses zero-copy channel delivery for UDP traffic (via platform_sockets)
 //! - Uses VirtualStack for TCP traffic (via wg_http)
 //! - All moonlight streaming traffic (video, audio, control) goes through the tunnel
+//! - Supports both IPv4 and IPv6 tunnel addresses
 
-#![allow(unused_mut)]
-#![allow(unused_variables)]
-#![allow(unused_imports)]
-
-use std::io::{self, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::cell::RefCell;
+use std::io;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -25,11 +23,6 @@ use boringtun::noise::{Tunn, TunnResult};
 use x25519_dalek::{PublicKey, StaticSecret};
 use log::{debug, error, info, warn};
 use parking_lot::Mutex;
-use smoltcp::iface::{Config as IfaceConfig, Interface, SocketSet};
-use smoltcp::phy::{Device, DeviceCapabilities, Medium, RxToken, TxToken};
-use smoltcp::socket::tcp::{Socket as SmolTcpSocket, SocketBuffer, State as TcpState};
-use smoltcp::time::Instant as SmolInstant;
-use smoltcp::wire::{IpAddress, IpCidr, IpEndpoint};
 
 // Re-export configuration from dedicated module
 pub use crate::wireguard_config::WireGuardConfig;
@@ -129,11 +122,11 @@ impl WireGuardTunnel {
     /// Start the WireGuard tunnel.
     /// This initiates the handshake and starts the background packet processing threads.
     pub fn start(&self) -> io::Result<()> {
-        if self.running.load(Ordering::SeqCst) {
+        if self.running.load(Ordering::Relaxed) {
             return Ok(());
         }
 
-        self.running.store(true, Ordering::SeqCst);
+        self.running.store(true, Ordering::Release);
         info!("Starting WireGuard tunnel...");
 
         // Initiate the handshake
@@ -168,7 +161,7 @@ impl WireGuardTunnel {
     /// Stop the WireGuard tunnel.
     pub fn stop(&self) {
         // Only log and act if actually running (avoids double-stop from Drop)
-        if self.running.swap(false, Ordering::SeqCst) {
+        if self.running.swap(false, Ordering::Release) {
             info!("Stopping WireGuard tunnel...");
             info!("WireGuard tunnel stopped");
         }
@@ -176,8 +169,8 @@ impl WireGuardTunnel {
 
     /// Check if the tunnel is running and the handshake is completed.
     pub fn is_ready(&self) -> bool {
-        self.running.load(Ordering::SeqCst)
-            && self.state.lock().handshake_completed.load(Ordering::SeqCst)
+        self.running.load(Ordering::Relaxed)
+            && self.state.lock().handshake_completed.load(Ordering::Acquire)
     }
 
     /// Wait for the handshake to complete, with a timeout.
@@ -214,36 +207,7 @@ impl WireGuardTunnel {
         Ok(())
     }
 
-    /// Send encapsulated data through the WireGuard tunnel.
-    /// Encapsulates under lock (fast crypto), then sends outside lock.
-    #[allow(dead_code)]
-    fn send_through_tunnel(state: &Arc<Mutex<TunnelState>>, payload: &[u8], src_addr: SocketAddr, dst_addr: SocketAddr) -> io::Result<()> {
-        // Build an IP/UDP packet wrapping the payload
-        let ip_packet = build_udp_ip_packet(src_addr, dst_addr, payload);
 
-        // Encapsulate under lock, copy result, release lock before sending
-        let (send_data, send_socket) = {
-            let st = state.lock();
-            let mut dst_buf = vec![0u8; WG_BUFFER_SIZE];
-
-            match st.tunnel.encapsulate(&ip_packet, &mut dst_buf) {
-                TunnResult::WriteToNetwork(data) => {
-                    let copied = data.to_vec();
-                    let socket = st.endpoint_socket.try_clone()
-                        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Socket clone: {}", e)))?;
-                    (copied, socket)
-                }
-                TunnResult::Err(e) => {
-                    error!("WireGuard encapsulation error: {:?}", e);
-                    return Err(io::Error::new(io::ErrorKind::Other, format!("Encapsulation failed: {:?}", e)));
-                }
-                _ => return Ok(()),
-            }
-        };
-        // Lock released - send outside lock
-        send_socket.send(&send_data)?;
-        Ok(())
-    }
 
     /// Background thread: receives packets from the WireGuard endpoint and decapsulates them
     fn endpoint_receiver_loop(
@@ -262,12 +226,13 @@ impl WireGuardTunnel {
         // Use short read timeout (10ms) - just enough to check shutdown flag
         recv_socket.set_read_timeout(Some(Duration::from_millis(10))).ok();
 
+        // Pre-allocate buffers once - reused for every packet (zero allocation hot path)
         let mut recv_buf = vec![0u8; WG_BUFFER_SIZE];
         let mut dec_buf = vec![0u8; WG_BUFFER_SIZE];
 
         info!("WireGuard endpoint receiver started");
 
-        while running.load(Ordering::SeqCst) {
+        while running.load(Ordering::Relaxed) {
             // Read WITHOUT holding tunnel lock - allows concurrent sends
             let n = match recv_socket.recv(&mut recv_buf) {
                 Ok(n) => n,
@@ -279,7 +244,7 @@ impl WireGuardTunnel {
                     continue;
                 }
                 Err(e) => {
-                    if running.load(Ordering::SeqCst) {
+                    if running.load(Ordering::Relaxed) {
                         warn!("WireGuard endpoint recv error: {}", e);
                     }
                     continue;
@@ -310,14 +275,14 @@ impl WireGuardTunnel {
                                 error!("Failed to send WireGuard followup: {}", e);
                             }
                             // Handshake likely completed
-                            if !st.handshake_completed.load(Ordering::SeqCst) {
-                                st.handshake_completed.store(true, Ordering::SeqCst);
+                            if !st.handshake_completed.load(Ordering::Relaxed) {
+                                st.handshake_completed.store(true, Ordering::Release);
                                 info!("WireGuard handshake completed!");
                             }
                         }
                         TunnResult::Done => {
-                            if !st.handshake_completed.load(Ordering::SeqCst) {
-                                st.handshake_completed.store(true, Ordering::SeqCst);
+                            if !st.handshake_completed.load(Ordering::Relaxed) {
+                                st.handshake_completed.store(true, Ordering::Release);
                                 info!("WireGuard handshake completed!");
                             }
                         }
@@ -326,23 +291,27 @@ impl WireGuardTunnel {
                 }
                 TunnResult::WriteToTunnelV4(data, _) | TunnResult::WriteToTunnelV6(data, _) => {
                     // Decapsulated IP packet - extract and forward to the right proxy
-                    if !st.handshake_completed.load(Ordering::SeqCst) {
-                        st.handshake_completed.store(true, Ordering::SeqCst);
+                    if !st.handshake_completed.load(Ordering::Relaxed) {
+                        st.handshake_completed.store(true, Ordering::Release);
                         info!("WireGuard handshake completed (first data packet)!");
                     }
                     drop(st); // Release lock before forwarding
 
-                    // Check IP protocol (byte at offset 9 in IPv4 header)
+                    // Determine IP version and extract protocol
                     if data.len() >= 20 {
-                        let protocol = data[9];
+                        let ip_version = (data[0] >> 4) & 0x0F;
+                        let protocol = match ip_version {
+                            4 => data[9],     // IPv4: protocol at offset 9
+                            6 if data.len() >= 40 => data[6], // IPv6: next header at offset 6
+                            _ => continue,
+                        };
+
                         if protocol == 6 {
                             // TCP packet - forward to HTTP shared proxy's virtual stack
-                            //debug!("WG TCP received: {} bytes, injecting to HTTP proxy", data.len());
                             crate::wg_http::wg_http_inject_packet(data);
                         } else if protocol == 17 {
                             // UDP packet - deliver via zero-copy channel
-                            if let Some((src_port, dst_port, payload)) = parse_udp_from_ip_packet(data) {
-                                //debug!("WG UDP received: src_port={}, dst_port={}, payload_len={}", src_port, dst_port, payload.len());
+                            if let Some((src_port, _dst_port, payload)) = parse_udp_from_ip_packet(data) {
                                 // Try zero-copy delivery via platform_sockets channel
                                 if crate::platform_sockets::try_push_udp_data(src_port, payload) {
                                     debug!("WG UDP: delivered via zero-copy channel (src_port={})", src_port);
@@ -375,7 +344,7 @@ impl WireGuardTunnel {
 
         info!("WireGuard timer thread started");
 
-        while running.load(Ordering::SeqCst) {
+        while running.load(Ordering::Relaxed) {
             thread::sleep(Duration::from_millis(250));
 
             let mut st = state.lock();
@@ -409,7 +378,7 @@ impl WireGuardTunnel {
                                         info!("DDNS: reconnected to new endpoint {}", new_addr);
 
                                         // Reset handshake state and retry count
-                                        st.handshake_completed.store(false, Ordering::SeqCst);
+                                        st.handshake_completed.store(false, Ordering::Release);
                                         handshake_retry_count = 0;
                                     }
                                 }
@@ -468,7 +437,7 @@ impl WireGuardTunnel {
                                 warn!("Connection expired, re-initiating handshake (attempt {})", handshake_retry_count);
                                 
                                 // Mark handshake as not completed
-                                st.handshake_completed.store(false, Ordering::SeqCst);
+                                st.handshake_completed.store(false, Ordering::Release);
                                 
                                 // Try to re-initiate handshake
                                 match st.tunnel.format_handshake_initiation(&mut dst_buf, false) {
@@ -493,7 +462,7 @@ impl WireGuardTunnel {
             }
             
             // Reset retry count if handshake is completed
-            if st.handshake_completed.load(Ordering::SeqCst) {
+            if st.handshake_completed.load(Ordering::Acquire) {
                 handshake_retry_count = 0;
             }
         }
@@ -509,52 +478,113 @@ impl Drop for WireGuardTunnel {
 }
 
 // ============================================================================
-// IP/UDP packet construction helpers
+// IP/UDP packet construction helpers (IPv4 + IPv6, zero-alloc variants)
 // ============================================================================
 
-/// Build an IPv4/UDP packet from a payload
-pub fn build_udp_ip_packet(src: SocketAddr, dst: SocketAddr, payload: &[u8]) -> Vec<u8> {
-    let src_ip = match src.ip() {
-        IpAddr::V4(ip) => ip,
-        _ => Ipv4Addr::new(0, 0, 0, 0),
-    };
-    let dst_ip = match dst.ip() {
-        IpAddr::V4(ip) => ip,
-        _ => Ipv4Addr::new(0, 0, 0, 0),
-    };
+/// Build an IPv4 or IPv6 UDP packet into the provided buffer.
+/// Returns the number of bytes written. Zero-allocation hot path.
+pub fn build_udp_ip_packet_into(buf: &mut [u8], src: SocketAddr, dst: SocketAddr, payload: &[u8]) -> usize {
+    match (src.ip(), dst.ip()) {
+        (IpAddr::V4(src_ip), IpAddr::V4(dst_ip)) => {
+            build_udp_ipv4_packet_into(buf, src_ip, src.port(), dst_ip, dst.port(), payload)
+        }
+        (IpAddr::V6(src_ip), IpAddr::V6(dst_ip)) => {
+            build_udp_ipv6_packet_into(buf, src_ip, src.port(), dst_ip, dst.port(), payload)
+        }
+        _ => 0, // Mismatched address families
+    }
+}
 
+/// Build an IPv4/UDP packet into buf. Returns total bytes written.
+fn build_udp_ipv4_packet_into(
+    buf: &mut [u8],
+    src_ip: Ipv4Addr, src_port: u16,
+    dst_ip: Ipv4Addr, dst_port: u16,
+    payload: &[u8],
+) -> usize {
     let udp_len = 8 + payload.len();
-    let total_len = 20 + udp_len; // IP header (20) + UDP header (8) + payload
-
-    let mut packet = Vec::with_capacity(total_len);
+    let total_len = 20 + udp_len;
+    if buf.len() < total_len {
+        return 0;
+    }
 
     // IPv4 header (20 bytes)
-    packet.push(0x45); // Version (4) + IHL (5)
-    packet.push(0x00); // DSCP + ECN
-    packet.extend_from_slice(&(total_len as u16).to_be_bytes()); // Total length
-    packet.extend_from_slice(&[0x00, 0x00]); // Identification
-    packet.extend_from_slice(&[0x40, 0x00]); // Flags (Don't Fragment) + Fragment Offset
-    packet.push(64); // TTL
-    packet.push(17); // Protocol (UDP)
-    packet.extend_from_slice(&[0x00, 0x00]); // Header checksum (will calculate)
-    packet.extend_from_slice(&src_ip.octets()); // Source IP
-    packet.extend_from_slice(&dst_ip.octets()); // Destination IP
+    buf[0] = 0x45; // Version (4) + IHL (5)
+    buf[1] = 0x00; // DSCP + ECN
+    buf[2..4].copy_from_slice(&(total_len as u16).to_be_bytes());
+    buf[4..6].copy_from_slice(&[0x00, 0x00]); // Identification
+    buf[6..8].copy_from_slice(&[0x40, 0x00]); // Flags (DF)
+    buf[8] = 64; // TTL
+    buf[9] = 17; // Protocol (UDP)
+    buf[10..12].copy_from_slice(&[0x00, 0x00]); // Checksum placeholder
+    buf[12..16].copy_from_slice(&src_ip.octets());
+    buf[16..20].copy_from_slice(&dst_ip.octets());
 
     // Calculate IP header checksum
-    let checksum = ip_checksum(&packet[..20]);
-    packet[10] = (checksum >> 8) as u8;
-    packet[11] = (checksum & 0xFF) as u8;
+    let checksum = ip_checksum(&buf[..20]);
+    buf[10] = (checksum >> 8) as u8;
+    buf[11] = (checksum & 0xFF) as u8;
 
     // UDP header (8 bytes)
-    packet.extend_from_slice(&src.port().to_be_bytes()); // Source port
-    packet.extend_from_slice(&dst.port().to_be_bytes()); // Destination port
-    packet.extend_from_slice(&(udp_len as u16).to_be_bytes()); // UDP length
-    packet.extend_from_slice(&[0x00, 0x00]); // UDP checksum (optional for IPv4)
+    buf[20..22].copy_from_slice(&src_port.to_be_bytes());
+    buf[22..24].copy_from_slice(&dst_port.to_be_bytes());
+    buf[24..26].copy_from_slice(&(udp_len as u16).to_be_bytes());
+    buf[26..28].copy_from_slice(&[0x00, 0x00]); // UDP checksum (optional for IPv4)
 
     // Payload
-    packet.extend_from_slice(payload);
+    buf[28..28 + payload.len()].copy_from_slice(payload);
 
-    packet
+    total_len
+}
+
+/// Build an IPv6/UDP packet into buf. Returns total bytes written.
+fn build_udp_ipv6_packet_into(
+    buf: &mut [u8],
+    src_ip: Ipv6Addr, src_port: u16,
+    dst_ip: Ipv6Addr, dst_port: u16,
+    payload: &[u8],
+) -> usize {
+    let udp_len = 8 + payload.len();
+    let total_len = 40 + udp_len; // IPv6 header (40) + UDP
+    if buf.len() < total_len {
+        return 0;
+    }
+
+    // IPv6 header (40 bytes)
+    buf[0] = 0x60; // Version (6) + Traffic Class high nibble
+    buf[1] = 0x00; // Traffic Class low nibble + Flow Label high
+    buf[2..4].copy_from_slice(&[0x00, 0x00]); // Flow Label low
+    buf[4..6].copy_from_slice(&(udp_len as u16).to_be_bytes()); // Payload length
+    buf[6] = 17; // Next Header (UDP)
+    buf[7] = 64; // Hop Limit
+    buf[8..24].copy_from_slice(&src_ip.octets()); // Source
+    buf[24..40].copy_from_slice(&dst_ip.octets()); // Destination
+
+    // UDP header (8 bytes) at offset 40
+    let udp_off = 40;
+    buf[udp_off..udp_off + 2].copy_from_slice(&src_port.to_be_bytes());
+    buf[udp_off + 2..udp_off + 4].copy_from_slice(&dst_port.to_be_bytes());
+    buf[udp_off + 4..udp_off + 6].copy_from_slice(&(udp_len as u16).to_be_bytes());
+    buf[udp_off + 6..udp_off + 8].copy_from_slice(&[0x00, 0x00]); // Checksum placeholder
+
+    // UDP checksum is mandatory for IPv6 - compute it
+    let cksum = udp_checksum_ipv6(&src_ip, &dst_ip, src_port, dst_port, payload);
+    buf[udp_off + 6] = (cksum >> 8) as u8;
+    buf[udp_off + 7] = (cksum & 0xFF) as u8;
+
+    // Payload
+    buf[udp_off + 8..udp_off + 8 + payload.len()].copy_from_slice(payload);
+
+    total_len
+}
+
+/// Allocating version for callers that need a Vec (backward compat)
+pub fn build_udp_ip_packet(src: SocketAddr, dst: SocketAddr, payload: &[u8]) -> Vec<u8> {
+    let max_len = 40 + 8 + payload.len(); // IPv6 header max
+    let mut buf = vec![0u8; max_len];
+    let len = build_udp_ip_packet_into(&mut buf, src, dst, payload);
+    buf.truncate(len);
+    buf
 }
 
 /// Calculate an IPv4 header checksum
@@ -563,7 +593,6 @@ fn ip_checksum(header: &[u8]) -> u16 {
     let mut i = 0;
     while i < header.len() {
         if i == 10 {
-            // Skip the checksum field itself
             i += 2;
             continue;
         }
@@ -575,159 +604,132 @@ fn ip_checksum(header: &[u8]) -> u16 {
         sum += word;
         i += 2;
     }
-    // Fold carries
     while (sum >> 16) != 0 {
         sum = (sum & 0xFFFF) + (sum >> 16);
     }
     !sum as u16
 }
 
-/// Parse source port, destination port, and payload from an IP/UDP packet
+/// Calculate UDP checksum for IPv6 (mandatory per RFC 2460)
+fn udp_checksum_ipv6(src: &Ipv6Addr, dst: &Ipv6Addr, src_port: u16, dst_port: u16, payload: &[u8]) -> u16 {
+    let udp_len = (8 + payload.len()) as u32;
+    let mut sum: u32 = 0;
+
+    // Pseudo-header: src addr (16 bytes)
+    for chunk in src.octets().chunks(2) {
+        sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+    }
+    // Pseudo-header: dst addr (16 bytes)
+    for chunk in dst.octets().chunks(2) {
+        sum += ((chunk[0] as u32) << 8) | (chunk[1] as u32);
+    }
+    // Pseudo-header: UDP length (4 bytes) + next header = 17 (4 bytes)
+    sum += (udp_len >> 16) & 0xFFFF;
+    sum += udp_len & 0xFFFF;
+    sum += 17; // next header = UDP
+
+    // UDP header
+    sum += src_port as u32;
+    sum += dst_port as u32;
+    sum += udp_len & 0xFFFF;
+    // checksum field = 0
+
+    // Payload
+    let mut i = 0;
+    while i + 1 < payload.len() {
+        sum += ((payload[i] as u32) << 8) | (payload[i + 1] as u32);
+        i += 2;
+    }
+    if i < payload.len() {
+        sum += (payload[i] as u32) << 8;
+    }
+
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    }
+    let result = !sum as u16;
+    if result == 0 { 0xFFFF } else { result } // 0 means no checksum in UDP; use 0xFFFF instead
+}
+
+/// Parse source port, destination port, and payload from an IPv4 or IPv6 UDP packet
 fn parse_udp_from_ip_packet(packet: &[u8]) -> Option<(u16, u16, &[u8])> {
-    // Minimum IPv4 + UDP header
+    if packet.is_empty() {
+        return None;
+    }
+
+    let version = (packet[0] >> 4) & 0x0F;
+    match version {
+        4 => parse_udp_from_ipv4(packet),
+        6 => parse_udp_from_ipv6(packet),
+        _ => None,
+    }
+}
+
+fn parse_udp_from_ipv4(packet: &[u8]) -> Option<(u16, u16, &[u8])> {
     if packet.len() < 28 {
         return None;
     }
-
-    // Check IPv4
-    let version = (packet[0] >> 4) & 0x0F;
-    if version != 4 {
-        return None;
-    }
-
     let ihl = (packet[0] & 0x0F) as usize * 4;
-    let protocol = packet[9];
-
-    // Only handle UDP (protocol 17)
-    if protocol != 17 {
+    if packet[9] != 17 || packet.len() < ihl + 8 {
         return None;
     }
-
-    if packet.len() < ihl + 8 {
-        return None;
-    }
-
-    let udp_header = &packet[ihl..];
-    let src_port = u16::from_be_bytes([udp_header[0], udp_header[1]]);
-    let dst_port = u16::from_be_bytes([udp_header[2], udp_header[3]]);
-    let udp_len = u16::from_be_bytes([udp_header[4], udp_header[5]]) as usize;
-
+    let udp = &packet[ihl..];
+    let src_port = u16::from_be_bytes([udp[0], udp[1]]);
+    let dst_port = u16::from_be_bytes([udp[2], udp[3]]);
+    let udp_len = u16::from_be_bytes([udp[4], udp[5]]) as usize;
     if udp_len < 8 || ihl + udp_len > packet.len() {
         return None;
     }
+    Some((src_port, dst_port, &udp[8..udp_len]))
+}
 
-    let payload = &udp_header[8..udp_len];
-    Some((src_port, dst_port, payload))
+fn parse_udp_from_ipv6(packet: &[u8]) -> Option<(u16, u16, &[u8])> {
+    if packet.len() < 48 { // 40 (IPv6) + 8 (UDP min)
+        return None;
+    }
+    // Next Header at offset 6
+    if packet[6] != 17 {
+        return None; // Not UDP (extension headers not supported for now)
+    }
+    let udp = &packet[40..];
+    let src_port = u16::from_be_bytes([udp[0], udp[1]]);
+    let dst_port = u16::from_be_bytes([udp[2], udp[3]]);
+    let udp_len = u16::from_be_bytes([udp[4], udp[5]]) as usize;
+    if udp_len < 8 || 40 + udp_len > packet.len() {
+        return None;
+    }
+    Some((src_port, dst_port, &udp[8..udp_len]))
 }
 
 // ============================================================================
-// TCP Proxy Implementation using smoltcp
-// ============================================================================
-
-/// A virtual network device that sends/receives through WireGuard
-#[allow(dead_code)]
-struct WgDevice {
-    /// Packets to be transmitted (from smoltcp to WireGuard)
-    tx_queue: Vec<Vec<u8>>,
-    /// Packets received (from WireGuard to smoltcp)  
-    rx_queue: Vec<Vec<u8>>,
-    /// MTU
-    mtu: usize,
-}
-
-#[allow(dead_code)]
-impl WgDevice {
-    fn new(mtu: usize) -> Self {
-        WgDevice {
-            tx_queue: Vec::new(),
-            rx_queue: Vec::new(),
-            mtu,
-        }
-    }
-
-    fn inject_packet(&mut self, packet: Vec<u8>) {
-        self.rx_queue.push(packet);
-    }
-
-    fn take_outgoing(&mut self) -> Vec<Vec<u8>> {
-        std::mem::take(&mut self.tx_queue)
-    }
-}
-
-#[allow(dead_code)]
-struct WgRxToken {
-    buffer: Vec<u8>,
-}
-
-impl RxToken for WgRxToken {
-    fn consume<R, F>(mut self, f: F) -> R
-    where
-        F: FnOnce(&mut [u8]) -> R,
-    {
-        f(&mut self.buffer)
-    }
-}
-
-#[allow(dead_code)]
-struct WgTxToken<'a> {
-    tx_queue: &'a mut Vec<Vec<u8>>,
-}
-
-impl<'a> TxToken for WgTxToken<'a> {
-    fn consume<R, F>(self, len: usize, f: F) -> R
-    where
-        F: FnOnce(&mut [u8]) -> R,
-    {
-        let mut buffer = vec![0u8; len];
-        let result = f(&mut buffer);
-        self.tx_queue.push(buffer);
-        result
-    }
-}
-
-impl Device for WgDevice {
-    type RxToken<'a> = WgRxToken;
-    type TxToken<'a> = WgTxToken<'a>;
-
-    fn receive(&mut self, _timestamp: SmolInstant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
-        let packet = self.rx_queue.pop()?;
-        Some((
-            WgRxToken { buffer: packet },
-            WgTxToken { tx_queue: &mut self.tx_queue },
-        ))
-    }
-
-    fn transmit(&mut self, _timestamp: SmolInstant) -> Option<Self::TxToken<'_>> {
-        Some(WgTxToken { tx_queue: &mut self.tx_queue })
-    }
-
-    fn capabilities(&self) -> DeviceCapabilities {
-        let mut caps = DeviceCapabilities::default();
-        caps.medium = Medium::Ip;
-        caps.max_transmission_unit = self.mtu;
-        caps
-    }
-}
-
-// ============================================================================
-// Global WireGuard tunnel instance
+// Global WireGuard tunnel instance + performance-optimized send cache
 // ============================================================================
 
 static GLOBAL_TUNNEL: Mutex<Option<WireGuardTunnel>> = Mutex::new(None);
 
+/// Cached state for hot-path packet sending.
+/// Avoids double-lock on GLOBAL_TUNNEL and per-packet socket dup() syscall.
+struct WgSendCache {
+    state: Arc<Mutex<TunnelState>>,
+    send_socket: UdpSocket, // pre-cloned once
+}
+static WG_SEND_CACHE: Mutex<Option<WgSendCache>> = Mutex::new(None);
+
+/// Thread-local encode buffer to avoid per-packet heap allocation (~65KB).
+thread_local! {
+    static ENCODE_BUF: RefCell<Vec<u8>> = RefCell::new(vec![0u8; WG_BUFFER_SIZE]);
+}
+
 /// Initialize and start the global WireGuard tunnel
 pub fn wg_start_tunnel(config: WireGuardConfig) -> io::Result<()> {
-    // Note: We don't stop the HTTP shared proxy here anymore.
-    // Instead, the HTTP proxy will detect streaming is active and route through
-    // the streaming tunnel using wg_send_ip_packet().
-    // This allows HTTP requests to work during streaming.
-    
     let mut global = GLOBAL_TUNNEL.lock();
     
     // Stop any existing tunnel
     if let Some(ref tunnel) = *global {
         tunnel.stop();
     }
+    // Clear send cache
+    *WG_SEND_CACHE.lock() = None;
 
     let tunnel = WireGuardTunnel::new(config)?;
     tunnel.start()?;
@@ -738,6 +740,20 @@ pub fn wg_start_tunnel(config: WireGuardConfig) -> io::Result<()> {
         return Err(io::Error::new(io::ErrorKind::TimedOut, "WireGuard handshake timed out"));
     }
 
+    // Populate send cache for hot-path
+    {
+        let state_arc = tunnel.state.clone();
+        let send_socket = {
+            let st = state_arc.lock();
+            st.endpoint_socket.try_clone()
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Socket clone for cache: {}", e)))?
+        };
+        *WG_SEND_CACHE.lock() = Some(WgSendCache {
+            state: state_arc,
+            send_socket,
+        });
+    }
+
     *global = Some(tunnel);
     Ok(())
 }
@@ -746,6 +762,9 @@ pub fn wg_start_tunnel(config: WireGuardConfig) -> io::Result<()> {
 pub fn wg_stop_tunnel() {
     // Disable zero-copy routing before stopping the tunnel
     crate::platform_sockets::disable_wg_routing();
+
+    // Clear send cache first
+    *WG_SEND_CACHE.lock() = None;
 
     let mut global = GLOBAL_TUNNEL.lock();
     if let Some(ref tunnel) = *global {
@@ -760,43 +779,80 @@ pub fn wg_is_tunnel_active() -> bool {
     global.as_ref().map_or(false, |t| t.is_ready())
 }
 
-/// Send an IP packet through the global WireGuard tunnel.
-/// This is used by wg_http to route TCP traffic through the streaming tunnel.
+/// Send an IP packet through the global WireGuard tunnel (hot path).
 ///
-/// Performance: Encapsulate under lock (fast crypto), then send outside lock
-/// to minimize lock hold time and avoid blocking the receiver loop.
+/// Performance: Uses cached `Arc<Mutex<TunnelState>>` and pre-cloned socket
+/// to avoid double-lock and per-packet `dup()` syscall. Uses thread-local
+/// encode buffer to avoid per-packet 65KB heap allocation.
 pub fn wg_send_ip_packet(packet: &[u8]) -> io::Result<()> {
-    let global = GLOBAL_TUNNEL.lock();
-    match global.as_ref() {
-        Some(tunnel) => {
-            // Encapsulate under lock (fast), copy result, release lock, then send
-            let (send_data, send_socket) = {
-                let state = tunnel.state.lock();
-                let mut encode_buf = vec![0u8; WG_BUFFER_SIZE];
-                match state.tunnel.encapsulate(packet, &mut encode_buf) {
-                    TunnResult::WriteToNetwork(data) => {
-                        let copied = data.to_vec();
-                        let socket = state.endpoint_socket.try_clone()
-                            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("Socket clone failed: {}", e)))?;
-                        (copied, socket)
-                    }
-                    TunnResult::Done => return Ok(()),
-                    TunnResult::Err(e) => return Err(io::Error::new(io::ErrorKind::Other, format!("Encapsulate error: {:?}", e))),
-                    _ => return Ok(()),
-                }
-            };
-            // State lock released here - send outside lock
-            drop(global); // Release GLOBAL_TUNNEL lock too
-            send_socket.send(&send_data)?;
-            Ok(())
-        }
-        None => Err(io::Error::new(io::ErrorKind::NotConnected, "WireGuard tunnel not active")),
+    let cache = WG_SEND_CACHE.lock();
+    let c = cache.as_ref().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotConnected, "WireGuard tunnel not active")
+    })?;
+
+    ENCODE_BUF.with(|buf_cell| {
+        let mut buf = buf_cell.borrow_mut();
+        // Encapsulate under tunnel state lock (fast crypto, ~microseconds)
+        let send_data = {
+            let st = c.state.lock();
+            match st.tunnel.encapsulate(packet, &mut buf) {
+                TunnResult::WriteToNetwork(data) => data.to_vec(),
+                TunnResult::Done => return Ok(()),
+                TunnResult::Err(e) => return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("Encapsulate error: {:?}", e),
+                )),
+                _ => return Ok(()),
+            }
+        };
+        // State lock released - send on pre-cloned socket (no lock, no dup() syscall)
+        c.send_socket.send(&send_data)?;
+        Ok(())
+    })
+}
+
+/// Batch-send multiple IP packets through the WireGuard tunnel.
+/// Single lock acquisition for all packets, minimizing lock contention.
+pub fn wg_send_ip_packets_batch(packets: &[Vec<u8>]) -> io::Result<()> {
+    if packets.is_empty() {
+        return Ok(());
     }
+
+    let cache = WG_SEND_CACHE.lock();
+    let c = cache.as_ref().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotConnected, "WireGuard tunnel not active")
+    })?;
+
+    ENCODE_BUF.with(|buf_cell| {
+        let mut buf = buf_cell.borrow_mut();
+        // Collect all encrypted packets under a single lock acquisition
+        let mut encrypted: Vec<Vec<u8>> = Vec::with_capacity(packets.len());
+        {
+            let st = c.state.lock();
+            for pkt in packets {
+                match st.tunnel.encapsulate(pkt, &mut buf) {
+                    TunnResult::WriteToNetwork(data) => {
+                        encrypted.push(data.to_vec());
+                    }
+                    TunnResult::Done => {}
+                    TunnResult::Err(e) => {
+                        warn!("Batch encapsulate error: {:?}", e);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // Lock released - send all encrypted packets
+        for enc in &encrypted {
+            if let Err(e) = c.send_socket.send(enc) {
+                warn!("Batch send error: {}", e);
+            }
+        }
+        Ok(())
+    })
 }
 
 /// Enable direct WireGuard routing for UDP/TCP traffic.
-/// This enables zero-copy routing: socket sendto calls targeting the WG server IP
-/// are intercepted and encapsulated directly through the WG tunnel.
 pub fn wg_enable_direct_routing(server_ip: Ipv4Addr) -> io::Result<()> {
     let global = GLOBAL_TUNNEL.lock();
     match global.as_ref() {
@@ -806,38 +862,13 @@ pub fn wg_enable_direct_routing(server_ip: Ipv4Addr) -> io::Result<()> {
                 IpAddr::V6(_) => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
-                        "IPv6 tunnel address not supported",
+                        "IPv6 tunnel address not yet supported for direct routing",
                     ));
                 }
             };
             crate::platform_sockets::enable_wg_routing(tunnel_ip, server_ip);
             info!("Direct WireGuard routing enabled: tunnel_ip={}, server_ip={}", tunnel_ip, server_ip);
             Ok(())
-        }
-        None => Err(io::Error::new(io::ErrorKind::NotConnected, "WireGuard tunnel not active")),
-    }
-}
-
-/// Register a callback to receive incoming IP packets from the global WireGuard tunnel.
-/// Returns a channel receiver for incoming IP packets destined to the specified port range.
-pub fn wg_register_tcp_receiver(
-    local_ip: Ipv4Addr,
-    port_start: u16,
-    port_end: u16,
-) -> io::Result<std::sync::mpsc::Receiver<Vec<u8>>> {
-    use std::sync::mpsc;
-    
-    let (tx, rx) = mpsc::channel();
-    
-    // Store the receiver registration in GLOBAL_TUNNEL
-    let mut global = GLOBAL_TUNNEL.lock();
-    match global.as_mut() {
-        Some(tunnel) => {
-            // Add to tunnel's TCP receivers (we'll need to add this field)
-            // For now, just return the channel - the actual routing will be done elsewhere
-            drop(global);
-            info!("TCP receiver registered for {}:{}-{}", local_ip, port_start, port_end);
-            Ok(rx)
         }
         None => Err(io::Error::new(io::ErrorKind::NotConnected, "WireGuard tunnel not active")),
     }
@@ -859,7 +890,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_parse_udp_packet() {
+    fn test_build_parse_udp_ipv4_packet() {
         let src = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 12345);
         let dst = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 47998);
         let payload = b"hello wireguard";
@@ -872,5 +903,41 @@ mod tests {
         assert_eq!(src_port, 12345);
         assert_eq!(dst_port, 47998);
         assert_eq!(data, payload);
+    }
+
+    #[test]
+    fn test_build_parse_udp_ipv6_packet() {
+        let src = SocketAddr::new(
+            IpAddr::V6("fd00::2".parse().unwrap()), 12345,
+        );
+        let dst = SocketAddr::new(
+            IpAddr::V6("fd00::1".parse().unwrap()), 47998,
+        );
+        let payload = b"hello ipv6 wireguard";
+
+        let packet = build_udp_ip_packet(src, dst, payload);
+        assert!(!packet.is_empty());
+        let parsed = parse_udp_from_ip_packet(&packet);
+        assert!(parsed.is_some());
+        let (src_port, dst_port, data) = parsed.unwrap();
+        assert_eq!(src_port, 12345);
+        assert_eq!(dst_port, 47998);
+        assert_eq!(data, payload);
+    }
+
+    #[test]
+    fn test_build_udp_ip_packet_into_zero_alloc() {
+        let src = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 5000);
+        let dst = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 6000);
+        let payload = b"test";
+        let mut buf = [0u8; 256];
+        let len = build_udp_ip_packet_into(&mut buf, src, dst, payload);
+        assert_eq!(len, 20 + 8 + 4);
+        let parsed = parse_udp_from_ip_packet(&buf[..len]);
+        assert!(parsed.is_some());
+        let (sp, dp, d) = parsed.unwrap();
+        assert_eq!(sp, 5000);
+        assert_eq!(dp, 6000);
+        assert_eq!(d, payload);
     }
 }
