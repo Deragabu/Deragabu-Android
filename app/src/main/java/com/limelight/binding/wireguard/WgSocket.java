@@ -344,6 +344,10 @@ public class WgSocket extends Socket {
             throw new SocketTimeoutException("Read timed out");
         } else if (result < 0) {
             throw new IOException("Native read error: " + result);
+        } else if (result == 0) {
+            // Rust returns 0 for EOF (channel disconnected / connection closed).
+            // Java InputStream convention: -1 signals end-of-stream.
+            return -1;
         }
 
         return result;

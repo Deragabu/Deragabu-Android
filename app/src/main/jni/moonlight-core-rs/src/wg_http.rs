@@ -169,7 +169,9 @@ pub fn wg_http_set_config(config: WgHttpConfig) {
 
 /// Clear the WireGuard HTTP client configuration and stop the shared proxy
 pub fn wg_http_clear_config() {
-    // Stop the shared proxy first
+    // Close all WgSocket connections first so they don't spin on dead channels
+    crate::wg_socket::wg_socket_close_all();
+    // Stop the shared proxy
     stop_shared_proxy();
     *GLOBAL_HTTP_CONFIG.lock() = None;
 }

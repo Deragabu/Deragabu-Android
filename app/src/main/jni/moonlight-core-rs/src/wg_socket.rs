@@ -241,6 +241,7 @@ pub fn wg_socket_recv(handle: u64, buffer: &mut [u8], timeout_ms: u32) -> i32 {
     match receiver.recv_timeout(timeout) {
         Ok(data) => {
             if data.is_empty() {
+                recv_buf.eof = true;
                 return 0; // EOF
             }
 
@@ -259,6 +260,8 @@ pub fn wg_socket_recv(handle: u64, buffer: &mut [u8], timeout_ms: u32) -> i32 {
             -2 // Timeout error code
         }
         Err(RecvTimeoutError::Disconnected) => {
+            // Mark EOF so subsequent calls return immediately without logging again
+            recv_buf.eof = true;
             debug!("wg_socket_recv: channel disconnected for handle {}", handle);
             0 // EOF
         }
