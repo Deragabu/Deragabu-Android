@@ -234,6 +234,8 @@ fn main() {
         // TCP functions
         .define("connectTcpSocket", "orig_connectTcpSocket")
         .define("shutdownTcpSocket", "orig_shutdownTcpSocket")
+        // Poll function (needed for WG virtual FDs)
+        .define("pollSockets", "orig_pollSockets")
         // Force-include WG interception header to redirect send/recv
         .flag("-include")
         .flag(wg_intercept_header.to_str().unwrap())
@@ -244,7 +246,7 @@ fn main() {
     // Build moonlight-common-c library
     // - PlatformCrypto.c excluded: crypto handled by Rust ring crate
     // - PlatformSockets.c excluded: compiled separately above with renamed symbols;
-    //   Rust provides recvUdpSocket/bindUdpSocket/closeSocket/connectTcpSocket/shutdownTcpSocket (WG wrappers)
+    //   Rust provides recvUdpSocket/bindUdpSocket/closeSocket/connectTcpSocket/shutdownTcpSocket/pollSockets (WG wrappers)
     // - wg_intercept.h force-included: redirects sendto/send/recv for WG routing
     let mut mlc_build = cc::Build::new();
     mlc_build

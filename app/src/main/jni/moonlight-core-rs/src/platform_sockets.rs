@@ -126,6 +126,9 @@ extern "C" {
 
     /// Original shutdownTcpSocket from PlatformSockets.c (renamed via -D define)
     fn orig_shutdownTcpSocket(s: i32);
+
+    /// Original pollSockets from PlatformSockets.c (renamed via -D define)
+    fn orig_pollSockets(pollFds: *mut libc::pollfd, pollFdsCount: libc::c_int, timeoutMs: libc::c_int) -> libc::c_int;
 }
 
 // ============================================================================
@@ -323,6 +326,222 @@ pub unsafe extern "C" fn closeSocket(s: i32) {
 
     // Close the real socket
     orig_closeSocket(s);
+}
+
+/// WG-aware pollSockets: handles both real FDs and WG virtual TCP FDs.
+///
+/// This wraps the original pollSockets to support WireGuard virtual TCP sockets.
+/// For virtual FDs (>= WG_TCP_FD_BASE), we check data availability using our
+/// internal mechanisms. For real FDs, we delegate to the original implementation.
+#[no_mangle]
+pub unsafe extern "C" fn pollSockets(
+    poll_fds: *mut libc::pollfd,
+    poll_fds_count: libc::c_int,
+    timeout_ms: libc::c_int,
+) -> libc::c_int {
+    if poll_fds.is_null() || poll_fds_count <= 0 {
+        return orig_pollSockets(poll_fds, poll_fds_count, timeout_ms);
+    }
+
+    let fds = std::slice::from_raw_parts_mut(poll_fds, poll_fds_count as usize);
+    
+    // Separate virtual FDs from real FDs
+    let mut has_virtual = false;
+    let mut has_real = false;
+    
+    for pfd in fds.iter() {
+        if pfd.fd >= WG_TCP_FD_BASE {
+            has_virtual = true;
+        } else if pfd.fd >= 0 {
+            has_real = true;
+        }
+    }
+    
+    // If only real FDs, delegate entirely to original
+    if !has_virtual {
+        return orig_pollSockets(poll_fds, poll_fds_count, timeout_ms);
+    }
+    
+    // If only virtual FDs, handle entirely in Rust
+    if !has_real {
+        return poll_virtual_only(fds, timeout_ms);
+    }
+    
+    // Mixed case: poll both
+    // First, check virtual FDs (non-blocking)
+    let mut ready_count = 0;
+    for pfd in fds.iter_mut() {
+        pfd.revents = 0;
+        
+        if pfd.fd >= WG_TCP_FD_BASE {
+            // Virtual WG TCP socket
+            let tcp_info = WG_TCP_SOCKETS.lock().get(&pfd.fd).cloned();
+            if let Some(info) = tcp_info {
+                if !info.is_open.load(Ordering::Relaxed) {
+                    // Socket closed - signal error/hangup
+                    pfd.revents = libc::POLLHUP;
+                    ready_count += 1;
+                } else {
+                    // Check for POLLIN (data available)
+                    if (pfd.events & libc::POLLIN) != 0 {
+                        if crate::wg_socket::wg_socket_has_data(info.wg_handle) {
+                            pfd.revents |= libc::POLLIN;
+                            ready_count += 1;
+                        }
+                    }
+                    // Check for POLLOUT (always writable for our implementation)
+                    if (pfd.events & libc::POLLOUT) != 0 {
+                        pfd.revents |= libc::POLLOUT;
+                        if pfd.revents == libc::POLLOUT as i16 {
+                            ready_count += 1;
+                        }
+                    }
+                }
+            } else {
+                // Invalid FD
+                pfd.revents = libc::POLLNVAL;
+                ready_count += 1;
+            }
+        }
+    }
+    
+    // If virtual FDs are ready, return immediately
+    if ready_count > 0 {
+        return ready_count;
+    }
+    
+    // Otherwise, poll real FDs with timeout, then check virtual again
+    // Create a temporary array for real FDs only
+    let real_count = fds.iter().filter(|p| p.fd >= 0 && p.fd < WG_TCP_FD_BASE).count();
+    if real_count > 0 {
+        // Poll real FDs with shorter timeout, then check virtual
+        let poll_timeout = if timeout_ms > 0 { std::cmp::min(timeout_ms, 100) } else { 0 };
+        
+        let start = std::time::Instant::now();
+        let total_timeout = if timeout_ms >= 0 {
+            std::time::Duration::from_millis(timeout_ms as u64)
+        } else {
+            std::time::Duration::from_secs(86400) // Effectively infinite
+        };
+        
+        loop {
+            // Create temp array for real FDs
+            let mut real_pfds: Vec<libc::pollfd> = fds
+                .iter()
+                .filter(|p| p.fd >= 0 && p.fd < WG_TCP_FD_BASE)
+                .cloned()
+                .collect();
+            
+            let result = orig_pollSockets(real_pfds.as_mut_ptr(), real_pfds.len() as i32, poll_timeout);
+            
+            // Copy revents back to real FDs
+            let mut real_idx = 0;
+            for pfd in fds.iter_mut() {
+                if pfd.fd >= 0 && pfd.fd < WG_TCP_FD_BASE {
+                    pfd.revents = real_pfds[real_idx].revents;
+                    if pfd.revents != 0 {
+                        ready_count += 1;
+                    }
+                    real_idx += 1;
+                }
+            }
+            
+            // Check virtual FDs again
+            for pfd in fds.iter_mut() {
+                if pfd.fd >= WG_TCP_FD_BASE {
+                    let tcp_info = WG_TCP_SOCKETS.lock().get(&pfd.fd).cloned();
+                    if let Some(info) = tcp_info {
+                        if !info.is_open.load(Ordering::Relaxed) {
+                            pfd.revents = libc::POLLHUP;
+                            ready_count += 1;
+                        } else {
+                            if (pfd.events & libc::POLLIN) != 0 {
+                                if crate::wg_socket::wg_socket_has_data(info.wg_handle) {
+                                    pfd.revents |= libc::POLLIN;
+                                    ready_count += 1;
+                                }
+                            }
+                            if (pfd.events & libc::POLLOUT) != 0 {
+                                pfd.revents |= libc::POLLOUT;
+                                if pfd.revents == libc::POLLOUT as i16 {
+                                    ready_count += 1;
+                                }
+                            }
+                        }
+                    } else {
+                        pfd.revents = libc::POLLNVAL;
+                        ready_count += 1;
+                    }
+                }
+            }
+            
+            if ready_count > 0 || result < 0 {
+                return if result < 0 && ready_count == 0 { result } else { ready_count };
+            }
+            
+            if start.elapsed() >= total_timeout {
+                return 0; // Timeout
+            }
+            
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+    
+    0
+}
+
+/// Poll only virtual WG TCP sockets (no real FDs)
+unsafe fn poll_virtual_only(fds: &mut [libc::pollfd], timeout_ms: libc::c_int) -> libc::c_int {
+    let start = std::time::Instant::now();
+    let timeout = if timeout_ms >= 0 {
+        std::time::Duration::from_millis(timeout_ms as u64)
+    } else {
+        std::time::Duration::from_secs(86400) // Effectively infinite
+    };
+    
+    loop {
+        let mut ready_count = 0;
+        
+        for pfd in fds.iter_mut() {
+            pfd.revents = 0;
+            
+            if pfd.fd >= WG_TCP_FD_BASE {
+                let tcp_info = WG_TCP_SOCKETS.lock().get(&pfd.fd).cloned();
+                if let Some(info) = tcp_info {
+                    if !info.is_open.load(Ordering::Relaxed) {
+                        pfd.revents = libc::POLLHUP;
+                        ready_count += 1;
+                    } else {
+                        if (pfd.events & libc::POLLIN) != 0 {
+                            if crate::wg_socket::wg_socket_has_data(info.wg_handle) {
+                                pfd.revents |= libc::POLLIN;
+                                ready_count += 1;
+                            }
+                        }
+                        if (pfd.events & libc::POLLOUT) != 0 {
+                            pfd.revents |= libc::POLLOUT;
+                            if pfd.revents == libc::POLLOUT as i16 {
+                                ready_count += 1;
+                            }
+                        }
+                    }
+                } else {
+                    pfd.revents = libc::POLLNVAL;
+                    ready_count += 1;
+                }
+            }
+        }
+        
+        if ready_count > 0 {
+            return ready_count;
+        }
+        
+        if start.elapsed() >= timeout {
+            return 0; // Timeout
+        }
+        
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
 }
 
 /// WG-aware sendto: encapsulates UDP directly through WireGuard for tracked sockets.

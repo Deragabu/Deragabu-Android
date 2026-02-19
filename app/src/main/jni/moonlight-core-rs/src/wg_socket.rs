@@ -349,3 +349,38 @@ pub fn wg_socket_connection_count() -> usize {
         None => 0,
     }
 }
+
+/// Check if a connection has data available to read (non-blocking).
+/// Returns true if data is buffered or available from the channel.
+pub fn wg_socket_has_data(handle: u64) -> bool {
+    // Get Arc refs without holding the global lock
+    let (receiver_arc, recv_buf_arc) = match get_connection_arcs(handle) {
+        Some((_conn_id, rx, buf)) => (rx, buf),
+        None => return false,
+    };
+
+    // Check if there's buffered data from a previous partial read
+    {
+        let recv_buf = recv_buf_arc.lock();
+        if recv_buf.pos < recv_buf.data.len() {
+            return true;
+        }
+    }
+
+    // Try to receive from channel without blocking
+    let receiver = receiver_arc.lock();
+    match receiver.try_recv() {
+        Ok(data) => {
+            // Data available - buffer it for later recv call
+            let mut recv_buf = recv_buf_arc.lock();
+            recv_buf.data = data;
+            recv_buf.pos = 0;
+            true
+        }
+        Err(std::sync::mpsc::TryRecvError::Empty) => false,
+        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+            // Channel closed - return true so recv() can return EOF
+            true
+        }
+    }
+}
