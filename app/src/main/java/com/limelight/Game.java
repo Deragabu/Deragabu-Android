@@ -183,8 +183,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private String activeVideoCodec = "";
 
     private String host; // Saved for WireGuard lifecycle management
-    private boolean wireGuardConfigured = false; // Track if WireGuard was set up
-    private boolean wireGuardStartedInCreate = false; // Prevent duplicate start from onStart
 
     // Network change callback for WireGuard endpoint rebinding
     private ConnectivityManager.NetworkCallback wgNetworkCallback;
@@ -1242,6 +1240,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 int waitMs = 0;
                 while (!MoonBridge.wgIsTunnelActive() && waitMs < 5000) {
                     try {
+                        //noinspection BusyWait
                         Thread.sleep(100);
                         waitMs += 100;
                     } catch (InterruptedException e) {
