@@ -602,7 +602,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // Setup WireGuard proxies if enabled
         startWireGuard();
-        wireGuardStartedInCreate = true;
 
         // Initialize the connection
         conn = new NvConnection(getApplicationContext(),
@@ -1183,8 +1182,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     @Override
     protected void onStart() {
         super.onStart();
-        // Reset flag after first onStart following onCreate.
-        wireGuardStartedInCreate = false;
     }
 
     /**
@@ -1266,7 +1263,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
             Log.i(TAG, "Configuring WireGuard routing for host: " + host);
             try {
-                wireGuardConfigured = true;
 
                 // Enable direct WireGuard routing - socket layer hook intercepts traffic
                 // to the target host IP and encapsulates directly through the tunnel
