@@ -185,15 +185,37 @@ extern "C" {
 
 /// Enable WG zero-copy routing with the given tunnel and server IPs.
 /// Called from wg_create_streaming_proxies after proxy creation.
+///
+/// IMPORTANT: This clears all existing socket mappings to ensure a clean state.
+/// Stale mappings from previous sessions could cause the first connection to fail
+/// because they reference old socket FDs that are no longer valid.
 pub fn enable_wg_routing(tunnel_ip: impl Into<IpAddr>, server_ip: impl Into<IpAddr>) {
     let tunnel_ip = tunnel_ip.into();
     let server_ip = server_ip.into();
+    
+    // Clear all existing socket mappings to ensure a clean state.
+    // This fixes the issue where the first connection would fail because stale
+    // mappings from previous sessions reference old socket FDs.
+    WG_UDP_SOCKETS.lock().clear();
+    WG_TCP_SOCKETS.lock().clear();
+    WG_PORT_SENDERS.lock().clear();
+    WG_INJECT_SOCKETS.lock().clear();
+    WG_INJECT_PORT_MAP.lock().clear();
+    WG_UDP_CONNECTED_PEERS.lock().clear();
+    WG_PENDING_PACKETS.lock().clear();
+    // Close and recreate inject socket on next use
+    if let Some(fd) = WG_INJECT_FD.lock().take() {
+        unsafe { libc::close(fd); }
+    }
+    // Reset TCP FD counter
+    WG_TCP_FD_COUNTER.store(WG_TCP_FD_BASE, Ordering::Relaxed);
+    
     let mut config = WG_CONFIG.lock();
     *config = Some(WgRoutingConfig { tunnel_ip, server_ip });
     WG_ROUTING_ACTIVE.store(true, Ordering::Release);
     info!(
-        "WG zero-copy routing enabled: tunnel_ip={}, server_ip={}",
-        tunnel_ip, server_ip
+        "WG zero-copy routing enabled: tunnel_ip={}, server_ip={} (cleared {} stale mappings)",
+        tunnel_ip, server_ip, 0 // Mappings already cleared above
     );
 }
 
