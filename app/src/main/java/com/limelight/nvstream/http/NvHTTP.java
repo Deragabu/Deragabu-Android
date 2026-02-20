@@ -467,8 +467,10 @@ public class NvHTTP {
         } catch (IOException e) {
             throw e;
         } catch (Throwable t) {
-            // Handle InterruptedException from OkHttp's internal connection handling
-            // OkHttp may throw InterruptedException directly in some edge cases
+            // Handle InterruptedException from OkHttp's internal connection handling.
+            // OkHttp's FastFallbackExchangeFinder.awaitTcpConnect() may throw
+            // InterruptedException directly when the thread is interrupted during
+            // parallel polling (e.g., another address succeeded first).
             if (t.getCause() != null && t.getCause() instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
                 throw new InterruptedIOException("HTTP request interrupted");
@@ -507,7 +509,11 @@ public class NvHTTP {
 
             return respString;
         } catch (IOException e) {
-            Log.e(TAG, "openHttpConnectionToString: " + e.getMessage(), e);
+            if (e instanceof InterruptedIOException || Thread.currentThread().isInterrupted()) {
+                Log.d(TAG, "openHttpConnectionToString: interrupted (normal during parallel polling)");
+            } else {
+                Log.e(TAG, "openHttpConnectionToString: " + e.getMessage(), e);
+            }
             throw e;
         }
     }

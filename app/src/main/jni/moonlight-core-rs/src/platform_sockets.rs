@@ -252,8 +252,15 @@ pub fn try_push_udp_data(src_port: u16, data: &[u8]) -> bool {
 /// try_inject_udp_data return false.
 ///
 /// The packet is stored in WG_PENDING_PACKETS and will be flushed into the
-/// appropriate channel once wg_sendto() registers the port mapping.
+/// appropriate channel once wg_sendto() registers the port mapping, or
+/// auto-assigned when only one unregistered socket remains.
 pub fn buffer_pending_udp_data(src_port: u16, data: &[u8]) {
+    // First, try auto-assignment: if exactly one WG_UDP_SOCKET has no remote_port,
+    // we can directly register it for this src_port.
+    if try_auto_assign_pending_port(src_port, data) {
+        return;
+    }
+
     let mut pending = WG_PENDING_PACKETS.lock();
     let queue = pending.entry(src_port).or_insert_with(VecDeque::new);
     if queue.len() < MAX_PENDING_PACKETS_PER_PORT {
@@ -353,6 +360,168 @@ fn flush_pending_inject_data(remote_port: u16, local_port: u16) {
     }
 }
 
+/// Try to auto-assign a pending server port to the sole unregistered WG UDP socket.
+///
+/// When WG decapsulates UDP data for an unknown port, this checks if there is
+/// exactly one WG_UDP_SOCKET with no `remote_port` assigned. If so, it must be
+/// the receive-only socket (e.g., video stream) and we can auto-register it.
+///
+/// Returns true if the packet was delivered (either to a newly-registered channel
+/// or directly), false if auto-assignment was not possible (multiple unregistered
+/// sockets, or none).
+fn try_auto_assign_pending_port(src_port: u16, data: &[u8]) -> bool {
+    // Collect unregistered sockets (those with no remote_port)
+    let sockets = WG_UDP_SOCKETS.lock();
+    let unregistered: Vec<(i32, Arc<WgUdpSocketInfo>)> = sockets
+        .iter()
+        .filter(|(_, info)| info.remote_port.lock().is_none())
+        .map(|(&fd, info)| (fd, info.clone()))
+        .collect();
+    drop(sockets);
+
+    if unregistered.len() != 1 {
+        // Can't disambiguate - either no sockets or multiple unregistered ones
+        return false;
+    }
+
+    let (fd, info) = &unregistered[0];
+    let fd = *fd;
+
+    // Auto-assign this port to the sole unregistered socket
+    *info.remote_port.lock() = Some(src_port);
+    WG_PORT_SENDERS.lock().insert(src_port, info.sender.clone());
+    info!(
+        "WG auto-assign: port {} -> fd={} local_port={} (sole unregistered socket)",
+        src_port, fd, info.local_port
+    );
+
+    // Deliver the current packet
+    let _ = info.sender.try_send(data.to_vec());
+
+    // Also flush any previously buffered packets for this port
+    flush_pending_udp_data(src_port, &info.sender);
+
+    true
+}
+
+/// Try to claim a pending port for a socket that has no remote_port yet.
+///
+/// Called from `recvUdpSocket` when the channel is empty (timeout) and the
+/// socket hasn't been assigned a remote_port. This handles the case where
+/// there were multiple unregistered sockets initially (preventing auto-assign
+/// in `buffer_pending_udp_data`), but by the time recv polls, some sockets
+/// have been registered via sendto, leaving only this one unregistered.
+///
+/// Also handles the case where we're the sole unregistered socket pulling
+/// from the pending buffer directly.
+fn try_claim_pending_port(info: &Arc<WgUdpSocketInfo>, fd: i32) -> bool {
+    // Only attempt if this socket has no remote_port
+    if info.remote_port.lock().is_some() {
+        return false;
+    }
+
+    // Check if there are any pending packets
+    let pending = WG_PENDING_PACKETS.lock();
+    if pending.is_empty() {
+        return false;
+    }
+
+    // Check how many unregistered sockets exist
+    let sockets = WG_UDP_SOCKETS.lock();
+    let unregistered_count = sockets
+        .values()
+        .filter(|s| s.remote_port.lock().is_none())
+        .count();
+    drop(sockets);
+
+    if unregistered_count != 1 {
+        // Multiple unregistered sockets - can't safely claim
+        return false;
+    }
+    drop(pending);
+
+    // We're the sole unregistered socket. Claim the first available pending port.
+    let mut pending = WG_PENDING_PACKETS.lock();
+    if let Some((&port, _)) = pending.iter().next() {
+        let queue = pending.remove(&port).unwrap();
+        drop(pending);
+
+        // Register this port for this socket
+        *info.remote_port.lock() = Some(port);
+        WG_PORT_SENDERS.lock().insert(port, info.sender.clone());
+        info!(
+            "WG claim: fd={} local_port={} claimed pending port {} ({} buffered packets)",
+            fd, info.local_port, port, queue.len()
+        );
+
+        // Flush all buffered packets into the channel
+        let mut delivered = 0usize;
+        let count = queue.len();
+        for pkt in queue {
+            match info.sender.try_send(pkt) {
+                Ok(()) => delivered += 1,
+                Err(TrySendError::Full(_)) => {
+                    warn!("WG claim flush: channel full for port {} after {} packets", port, delivered);
+                    break;
+                }
+                Err(TrySendError::Disconnected(_)) => break,
+            }
+        }
+        if delivered > 0 {
+            info!("WG claim flush: delivered {}/{} packets for port {}", delivered, count, port);
+        }
+        true
+    } else {
+        false
+    }
+}
+
+/// Try to auto-assign ALL pending ports to unregistered sockets.
+///
+/// Called after a socket registers its port via wg_sendto. If this reduces
+/// the unregistered socket count to 1, we can assign all remaining pending
+/// ports to that socket (e.g., video stream after audio registered).
+fn try_auto_assign_all_pending() {
+    let pending_ports: Vec<u16> = {
+        let pending = WG_PENDING_PACKETS.lock();
+        if pending.is_empty() {
+            return;
+        }
+        pending.keys().cloned().collect()
+    };
+
+    for port in pending_ports {
+        // Check if this port is already registered (could have been assigned by a previous iteration)
+        if WG_PORT_SENDERS.lock().contains_key(&port) {
+            continue;
+        }
+
+        // Collect unregistered sockets
+        let sockets = WG_UDP_SOCKETS.lock();
+        let unregistered: Vec<(i32, Arc<WgUdpSocketInfo>)> = sockets
+            .iter()
+            .filter(|(_, info)| info.remote_port.lock().is_none())
+            .map(|(&fd, info)| (fd, info.clone()))
+            .collect();
+        drop(sockets);
+
+        if unregistered.len() != 1 {
+            // Can't disambiguate - still multiple or no unregistered sockets
+            return;
+        }
+
+        let (fd, info) = &unregistered[0];
+        *info.remote_port.lock() = Some(port);
+        WG_PORT_SENDERS.lock().insert(port, info.sender.clone());
+        info!(
+            "WG auto-assign (post-sendto): port {} -> fd={} local_port={}",
+            port, fd, info.local_port
+        );
+
+        // Flush buffered packets
+        flush_pending_udp_data(port, &info.sender);
+    }
+}
 /// Check if WG routing is active (for use by other modules)
 pub fn is_wg_routing_active() -> bool {
     WG_ROUTING_ACTIVE.load(Ordering::Acquire)
@@ -401,7 +570,26 @@ pub unsafe extern "C" fn recvUdpSocket(
                 copy_len as i32
             }
             Err(RecvTimeoutError::Timeout) => {
-                // Timeout - same as original behavior (return 0)
+                // Timeout - channel empty. If this socket has no remote_port yet,
+                // try to claim a pending port (handles receive-only streams like video
+                // where the client never calls sendto).
+                if info.remote_port.lock().is_none() {
+                    if try_claim_pending_port(&info, s) {
+                        // Successfully claimed a port and flushed data - try recv again immediately
+                        match info.receiver.try_recv() {
+                            Ok(data) => {
+                                let copy_len = std::cmp::min(data.len(), size as usize);
+                                std::ptr::copy_nonoverlapping(
+                                    data.as_ptr(),
+                                    buffer as *mut u8,
+                                    copy_len,
+                                );
+                                return copy_len as i32;
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                }
                 0
             }
             Err(RecvTimeoutError::Disconnected) => {
@@ -813,6 +1001,11 @@ pub unsafe extern "C" fn wg_sendto(
                 // This fixes the race where the server starts sending on a port
                 // (e.g., 47998) before the client has sent the first ping.
                 flush_pending_udp_data(dest_port, &info.sender);
+
+                // Now that this socket is registered, there may be exactly one
+                // unregistered socket remaining. Try to auto-assign pending ports
+                // to it (e.g., video stream which never calls sendto).
+                try_auto_assign_all_pending();
             }
         }
         lp

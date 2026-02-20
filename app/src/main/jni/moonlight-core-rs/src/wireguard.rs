@@ -422,9 +422,9 @@ impl WireGuardTunnel {
                             if let Some((src_port, _dst_port, payload)) = parse_udp_from_ip_packet(data) {
                                 // Try zero-copy delivery via platform_sockets channel
                                 if crate::platform_sockets::try_push_udp_data(src_port, payload) {
-                                    debug!("WG UDP: delivered via zero-copy channel (src_port={})", src_port);
+                                    //debug!("WG UDP: delivered via zero-copy channel (src_port={})", src_port);
                                 } else if crate::platform_sockets::try_inject_udp_data(src_port, payload) {
-                                    debug!("WG UDP: delivered via loopback injection (src_port={})", src_port);
+                                    //debug!("WG UDP: delivered via loopback injection (src_port={})", src_port);
                                 } else {
                                     // No channel or inject mapping yet - buffer for later.
                                     // This handles the race where the server sends data on a
