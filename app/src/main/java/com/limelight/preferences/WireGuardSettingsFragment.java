@@ -4,12 +4,19 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Base64;
 import android.util.Log;
 import android.widget.Toast;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AlertDialog;
@@ -60,8 +67,32 @@ public class WireGuardSettingsFragment extends PreferenceFragmentCompat {
     private EditTextPreference mtuPref;
     private Preference importPref;
     private Preference exportPref;
+    private Preference vpnWarningPref;
     
     private PreferenceDataStore dataStore;
+
+    // Known VPN/proxy apps that may interfere with in-app WireGuard
+    private static final Map<String, String> KNOWN_VPN_APPS = new LinkedHashMap<>();
+    static {
+        KNOWN_VPN_APPS.put("com.github.metacubex.clash.meta", "Clash Meta");
+        KNOWN_VPN_APPS.put("com.metacubex.clash", "Clash Meta");
+        KNOWN_VPN_APPS.put("dev.clash.meta.android", "Clash Meta");
+        KNOWN_VPN_APPS.put("com.github.kr328.clash", "Clash for Android");
+        KNOWN_VPN_APPS.put("com.github.kr328.clash.foss", "Clash for Android");
+        KNOWN_VPN_APPS.put("me.kr328.clash", "Clash for Android");
+        KNOWN_VPN_APPS.put("com.v2ray.ang", "v2rayNG");
+        KNOWN_VPN_APPS.put("io.nekohasekai.sagernet", "SagerNet");
+        KNOWN_VPN_APPS.put("io.nekohasekai.sfa", "sing-box (SFA)");
+        KNOWN_VPN_APPS.put("moe.nb4a.proxy", "NekoBox for Android");
+        KNOWN_VPN_APPS.put("com.github.nicehashqiang.surfboard", "Surfboard");
+        KNOWN_VPN_APPS.put("me.drakeet.surfboard", "Surfboard");
+        KNOWN_VPN_APPS.put("com.wireguard.android", "WireGuard (official)");
+        KNOWN_VPN_APPS.put("org.torproject.android", "Orbot");
+        KNOWN_VPN_APPS.put("com.ssrplus.proxy", "SSRPlus");
+        KNOWN_VPN_APPS.put("tw.nekomimi.proxy", "NekoRay");
+        KNOWN_VPN_APPS.put("com.github.nicehashqiang.hiddify", "Hiddify");
+        KNOWN_VPN_APPS.put("app.hiddify.com", "Hiddify");
+    }
 
     @Override
     public void onCreatePreferences(@Nullable Bundle savedInstanceState, @Nullable String rootKey) {
@@ -78,6 +109,7 @@ public class WireGuardSettingsFragment extends PreferenceFragmentCompat {
         setupListeners();
         updatePublicKey();
         updateStatusUI();
+        checkVpnConflict();
     }
 
     /**
@@ -153,6 +185,7 @@ public class WireGuardSettingsFragment extends PreferenceFragmentCompat {
         mtuPref = findPreference(PREF_MTU);
         importPref = findPreference("wg_import_config");
         exportPref = findPreference("wg_export_config");
+        vpnWarningPref = findPreference("wg_vpn_warning");
 
         // Set up private key to show masked value
         if (privateKeyPref != null) {
@@ -263,6 +296,7 @@ public class WireGuardSettingsFragment extends PreferenceFragmentCompat {
     public void onResume() {
         super.onResume();
         updateStatusUI();
+        checkVpnConflict();
     }
 
     private void updatePublicKey() {
@@ -430,7 +464,13 @@ public class WireGuardSettingsFragment extends PreferenceFragmentCompat {
                 Thread.sleep(3000);
 
                 boolean isActive = WireGuardManager.isTunnelActive();
-                WireGuardManager.stopTunnel();
+                boolean switchOn = enabledPref != null && enabledPref.isChecked();
+
+                // Only stop tunnel if switch is OFF (test-only mode).
+                // If switch is ON, keep the tunnel running.
+                if (!switchOn) {
+                    WireGuardManager.stopTunnel();
+                }
 
                 mainHandler.post(() -> {
                     if (testConnectionPref != null) {
@@ -438,7 +478,7 @@ public class WireGuardSettingsFragment extends PreferenceFragmentCompat {
                     }
                     if (success && isActive) {
                         Toast.makeText(requireContext(), R.string.wireguard_connection_success, Toast.LENGTH_SHORT).show();
-                        updateStatus(Status.DISCONNECTED);
+                        updateStatus(switchOn ? Status.CONNECTED : Status.DISCONNECTED);
                     } else {
                         Toast.makeText(requireContext(),
                                 getString(R.string.wireguard_connection_failed, "Handshake failed"),
@@ -633,6 +673,59 @@ public class WireGuardSettingsFragment extends PreferenceFragmentCompat {
                 updateStatus(Status.DISCONNECTED);
             }
         }
+    }
+
+    /**
+     * Check if a VPN app is active and warn the user if it may conflict
+     * with the built-in WireGuard tunnel.
+     */
+    private void checkVpnConflict() {
+        if (vpnWarningPref == null) return;
+
+        // First check if there's an active VPN network
+        ConnectivityManager cm = (ConnectivityManager)
+                requireContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+        boolean vpnActive = false;
+        if (cm != null) {
+            Network[] networks = cm.getAllNetworks();
+            for (Network network : networks) {
+                NetworkCapabilities caps = cm.getNetworkCapabilities(network);
+                if (caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                    vpnActive = true;
+                    break;
+                }
+            }
+        }
+
+        if (!vpnActive) {
+            vpnWarningPref.setVisible(false);
+            return;
+        }
+
+        // VPN is active — try to identify which app it is
+        String detectedAppName = detectInstalledVpnApp();
+        if (detectedAppName != null) {
+            vpnWarningPref.setSummary(getString(R.string.wireguard_vpn_warning_summary, detectedAppName));
+        } else {
+            vpnWarningPref.setSummary(getString(R.string.wireguard_vpn_warning_summary, "Another VPN app"));
+        }
+        vpnWarningPref.setVisible(true);
+    }
+
+    /**
+     * Detect which known VPN/proxy app is installed on the device.
+     * Returns the friendly name of the first match, or null if none found.
+     */
+    private String detectInstalledVpnApp() {
+        PackageManager pm = requireContext().getPackageManager();
+        for (Map.Entry<String, String> entry : KNOWN_VPN_APPS.entrySet()) {
+            try {
+                pm.getPackageInfo(entry.getKey(), 0);
+                return entry.getValue();
+            } catch (PackageManager.NameNotFoundException ignored) {
+            }
+        }
+        return null;
     }
 
     @Override

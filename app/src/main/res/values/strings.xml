@@ -507,4 +507,6 @@
     <string name="wireguard_import_failed">Failed to import configuration: %1$s</string>
     <string name="wireguard_export_success">Configuration exported successfully</string>
     <string name="wireguard_confirm_generate_keys">Generate new keys? This will replace your current keys.</string>
+    <string name="wireguard_vpn_warning_title">VPN Conflict Detected</string>
+    <string name="wireguard_vpn_warning_summary">%1$s is active and may prevent the built-in WireGuard tunnel from connecting. Please add Deragabu to its bypass/exception list (split tunneling).</string>
 </resources>

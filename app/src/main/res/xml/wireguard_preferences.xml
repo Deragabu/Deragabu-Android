@@ -9,6 +9,14 @@
         android:summary="@string/summary_wg_enabled"
         android:defaultValue="false" />
 
+    <!-- VPN Conflict Warning (hidden by default) -->
+    <Preference
+        android:key="wg_vpn_warning"
+        android:title="@string/wireguard_vpn_warning_title"
+        android:icon="@android:drawable/ic_dialog_alert"
+        android:selectable="false"
+        app:isPreferenceVisible="false" />
+
     <!-- Connection Status -->
     <Preference
         android:key="wg_connection_status"
