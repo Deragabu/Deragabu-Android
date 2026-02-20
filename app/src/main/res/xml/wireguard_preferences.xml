@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <!-- Enable WireGuard -->
+    <SwitchPreferenceCompat
+        android:key="wg_enabled"
+        android:title="@string/title_wg_enabled"
+        android:summary="@string/summary_wg_enabled"
+        android:defaultValue="false" />
+
+    <!-- Connection Status -->
+    <Preference
+        android:key="wg_connection_status"
+        android:title="@string/wireguard_connection_status"
+        android:summary="@string/wireguard_status_disconnected"
+        android:selectable="false" />
+
+    <!-- Test Connection Button -->
+    <Preference
+        android:key="wg_test_connection"
+        android:title="@string/wireguard_test_connection"
+        android:summary="@string/wireguard_test_connection_summary" />
+
+    <!-- Local Configuration Section -->
+    <PreferenceCategory
+        android:key="category_wg_local"
+        android:title="@string/wireguard_section_local">
+
+        <!-- Private Key -->
+        <EditTextPreference
+            android:key="wg_private_key"
+            android:title="@string/title_wg_private_key"
+            android:summary="@string/summary_wg_private_key"
+            android:inputType="textPassword"
+            app:useSimpleSummaryProvider="false" />
+
+        <!-- Generate Keys Button -->
+        <Preference
+            android:key="wg_generate_keys"
+            android:title="@string/wireguard_generate_keys"
+            android:summary="@string/wireguard_generate_keys_summary" />
+
+        <!-- Public Key (read-only) -->
+        <Preference
+            android:key="wg_public_key"
+            android:title="@string/wireguard_public_key"
+            android:summary="@string/wireguard_public_key_tap_to_copy"
+            android:selectable="true" />
+
+        <!-- Tunnel Address -->
+        <EditTextPreference
+            android:key="wg_tunnel_address"
+            android:title="@string/wireguard_tunnel_address"
+            android:summary="@string/wireguard_tunnel_address_summary"
+            android:defaultValue="10.0.0.2"
+            app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
+
+    <!-- Peer Configuration Section -->
+    <PreferenceCategory
+        android:key="category_wg_peer"
+        android:title="@string/wireguard_section_peer">
+
+        <!-- Peer Public Key -->
+        <EditTextPreference
+            android:key="wg_peer_public_key"
+            android:title="@string/title_wg_peer_public_key"
+            android:summary="@string/summary_wg_peer_public_key"
+            app:useSimpleSummaryProvider="true" />
+
+        <!-- Peer Endpoint -->
+        <EditTextPreference
+            android:key="wg_peer_endpoint"
+            android:title="@string/wireguard_peer_endpoint"
+            android:summary="@string/wireguard_peer_endpoint_summary"
+            app:useSimpleSummaryProvider="true" />
+
+        <!-- Preshared Key (optional) -->
+        <EditTextPreference
+            android:key="wg_preshared_key"
+            android:title="@string/wireguard_preshared_key"
+            android:summary="@string/wireguard_preshared_key_hint"
+            android:inputType="textPassword"
+            app:useSimpleSummaryProvider="false" />
+
+    </PreferenceCategory>
+
+    <!-- Advanced Settings Section -->
+    <PreferenceCategory
+        android:key="category_wg_advanced"
+        android:title="@string/wireguard_section_advanced">
+
+        <!-- MTU -->
+        <EditTextPreference
+            android:key="wg_mtu"
+            android:title="@string/wireguard_mtu"
+            android:summary="@string/wireguard_mtu_summary"
+            android:defaultValue="1420"
+            android:inputType="number"
+            app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
+
+    <!-- Import/Export Section -->
+    <PreferenceCategory
+        android:key="category_wg_import_export"
+        android:title="@string/wireguard_section_import_export">
+
+        <!-- Import Config -->
+        <Preference
+            android:key="wg_import_config"
+            android:title="@string/wireguard_import"
+            android:summary="@string/wireguard_import_summary" />
+
+        <!-- Export Config -->
+        <Preference
+            android:key="wg_export_config"
+            android:title="@string/wireguard_export"
+            android:summary="@string/wireguard_export_summary" />
+
+    </PreferenceCategory>
+
+</PreferenceScreen>

@@ -20,6 +20,7 @@ import com.limelight.binding.wireguard.WireGuardManager;
 import com.limelight.binding.wireguard.WgSocketFactory;
 import com.limelight.nvstream.http.ComputerDetails;
 import com.limelight.nvstream.http.NvHTTP;
+import com.limelight.preferences.MMKVPreferenceManager;
 import com.limelight.nvstream.http.PairingManager;
 import com.limelight.nvstream.http.PairingManager.PairState;
 
@@ -565,7 +566,7 @@ public class PairingService extends Service {
      * @param computerAddress The target server address to route through WireGuard
      */
     private void setupWireGuardProxy(String computerAddress) {
-        SharedPreferences wgPrefs = getSharedPreferences("wireguard_config", Context.MODE_PRIVATE);
+        SharedPreferences wgPrefs = MMKVPreferenceManager.getDefaultSharedPreferences(this);
         boolean wgEnabled = wgPrefs.getBoolean("wg_enabled", false);
         Log.i(TAG, "setupWireGuardProxy: wg_enabled=" + wgEnabled + ", computerAddress=" + computerAddress);
         

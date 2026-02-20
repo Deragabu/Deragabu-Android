@@ -803,9 +803,8 @@ public class PreferenceConfiguration {
         config.enableMdns = prefs.getBoolean(ENABLE_MDNS_PREF_STRING, DEFAULT_ENABLE_MDNS);
         config.encryptionMode = prefs.getString(ENCRYPTION_MODE_PREF_STRING, DEFAULT_ENCRYPTION_MODE);
 
-        // WireGuard tunnel settings - read from the dedicated wireguard_config SharedPreferences
-        // to stay in sync with WireGuardSettingsActivity which saves to that file
-        SharedPreferences wgPrefs = context.getSharedPreferences("wireguard_config", Context.MODE_PRIVATE);
+        // WireGuard tunnel settings - read from MMKV (same storage as WireGuardSettingsFragment)
+        SharedPreferences wgPrefs = MMKVPreferenceManager.getDefaultSharedPreferences(context);
         config.wgEnabled = wgPrefs.getBoolean("wg_enabled", DEFAULT_WG_ENABLED);
         config.wgPrivateKey = wgPrefs.getString("wg_private_key", "");
         config.wgPeerPublicKey = wgPrefs.getString("wg_peer_public_key", "");

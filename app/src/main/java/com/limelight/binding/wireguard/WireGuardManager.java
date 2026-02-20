@@ -3,6 +3,9 @@ package com.limelight.binding.wireguard;
 import android.util.Base64;
 import android.util.Log;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+
 /**
  * WireGuard tunnel manager that interfaces with the Rust native library.
  * Provides methods for configuring and managing the WireGuard VPN tunnel
@@ -137,6 +140,52 @@ public class WireGuardManager {
         statusCallback = callback;
     }
 
+    /**
+     * Resolve endpoint hostname to IP address for DDNS support.
+     * The endpoint format is "hostname:port" or "ip:port".
+     * If hostname is already an IP, returns the original endpoint.
+     *
+     * @param endpoint The endpoint in "hostname:port" format
+     * @return The resolved endpoint in "ip:port" format, or null if resolution fails
+     */
+    public static String resolveEndpoint(String endpoint) {
+        if (endpoint == null || !endpoint.contains(":")) {
+            Log.e(TAG, "Invalid endpoint format: " + endpoint);
+            return null;
+        }
+
+        int lastColon = endpoint.lastIndexOf(':');
+        String host = endpoint.substring(0, lastColon);
+        String port = endpoint.substring(lastColon + 1);
+
+        try {
+            // Handle IPv6 addresses in brackets
+            if (host.startsWith("[") && host.endsWith("]")) {
+                host = host.substring(1, host.length() - 1);
+            }
+
+            InetAddress address = InetAddress.getByName(host);
+            String resolvedHost = address.getHostAddress();
+
+            if (resolvedHost == null) {
+                Log.e(TAG, "Failed to get host address for: " + host);
+                return null;
+            }
+
+            // For IPv6, wrap in brackets
+            if (resolvedHost.contains(":")) {
+                resolvedHost = "[" + resolvedHost + "]";
+            }
+
+            String resolved = resolvedHost + ":" + port;
+            Log.i(TAG, "Resolved endpoint: " + endpoint + " -> " + resolved);
+            return resolved;
+        } catch (UnknownHostException e) {
+            Log.e(TAG, "Failed to resolve endpoint hostname: " + host, e);
+            return null;
+        }
+    }
+
 
     /**
      * Start the WireGuard tunnel with the given configuration
@@ -158,7 +207,7 @@ public class WireGuardManager {
         }
 
         try {
-            // Pass endpoint directly to Rust - DNS resolution happens dynamically on each connection
+            // Pass endpoint directly to Rust - DNS resolution happens in native code
             // This supports DDNS scenarios where IP may change
             boolean result = nativeStartTunnel(
                 config.privateKey,
@@ -325,7 +374,7 @@ public class WireGuardManager {
         }
 
         try {
-            // Pass endpoint directly to Rust - DNS resolution happens dynamically on each connection
+            // Pass endpoint directly to Rust - DNS resolution happens in native code
             // This supports DDNS scenarios where IP may change
             boolean result = nativeHttpSetConfig(
                 config.privateKey,
