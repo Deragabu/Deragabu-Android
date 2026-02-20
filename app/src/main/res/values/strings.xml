@@ -441,6 +441,7 @@
     <string name="back_menu_text_input">Text Input Keyboard</string>
     <string name="back_menu_alt_f4">Send Alt+F4</string>
     <string name="back_menu_task_manager">Open Task Manager</string>
+    <string name="back_menu_toggle_cursor">Toggle Mouse Cursor</string>
     <string name="back_menu_cancel">Cancel</string>
 
     <!-- Sunshine pairing -->

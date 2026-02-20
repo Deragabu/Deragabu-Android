@@ -1465,16 +1465,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                     // Toggle cursor visibility
                     case KeyEvent.KEYCODE_C:
-                        if (!grabbedInput) {
-                            inputCaptureProvider.enableCapture();
-                            grabbedInput = true;
-                        }
-                        cursorVisible = !cursorVisible;
-                        if (cursorVisible) {
-                            inputCaptureProvider.showCursor();
-                        } else {
-                            inputCaptureProvider.hideCursor();
-                        }
+                        toggleMouseCursor();
+                        break;
+
+                    // Toggle cursor visibility (alternative shortcut)
+                    case KeyEvent.KEYCODE_N:
+                        toggleMouseCursor();
                         break;
 
                     default:
@@ -1494,6 +1490,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 case KeyEvent.KEYCODE_Z:
                 case KeyEvent.KEYCODE_Q:
                 case KeyEvent.KEYCODE_C:
+                case KeyEvent.KEYCODE_N:
                     // Remember that a special key combo was activated, so we can consume all key
                     // events until the modifiers come up
                     specialKeyCode = androidKeyCode;
@@ -1920,6 +1917,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             final int MENU_TEXT_INPUT = 2;
             final int MENU_ALT_F4 = 3;
             final int MENU_TASK_MANAGER = 4;
+            final int MENU_TOGGLE_CURSOR = 5;
 
             String[] menuItems = {
                     getString(R.string.back_menu_disconnect),
@@ -1927,6 +1925,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     getString(R.string.back_menu_text_input),
                     getString(R.string.back_menu_alt_f4),
                     getString(R.string.back_menu_task_manager),
+                    getString(R.string.back_menu_toggle_cursor),
                     getString(R.string.back_menu_cancel)
             };
 
@@ -1943,6 +1942,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                             sendAltF4();
                         } else if (which == MENU_TASK_MANAGER) {
                             sendCtrlShiftEsc();
+                        } else if (which == MENU_TOGGLE_CURSOR) {
+                            toggleMouseCursor();
                         }
                         // Cancel doesn't need action, dialog auto-dismisses
                     })
@@ -1983,6 +1984,20 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 (byte) (KeyboardPacket.MODIFIER_CTRL | KeyboardPacket.MODIFIER_SHIFT), (byte) 0);
         conn.sendKeyboardInput(shiftKeyCode, KeyboardPacket.KEY_UP, KeyboardPacket.MODIFIER_CTRL, (byte) 0);
         conn.sendKeyboardInput(ctrlKeyCode, KeyboardPacket.KEY_UP, (byte) 0, (byte) 0);
+    }
+
+    private void toggleMouseCursor() {
+        // Toggle mouse cursor visibility
+        if (!grabbedInput) {
+            inputCaptureProvider.enableCapture();
+            grabbedInput = true;
+        }
+        cursorVisible = !cursorVisible;
+        if (cursorVisible) {
+            inputCaptureProvider.showCursor();
+        } else {
+            inputCaptureProvider.hideCursor();
+        }
     }
 
     private byte getLiTouchTypeFromEvent(MotionEvent event) {
